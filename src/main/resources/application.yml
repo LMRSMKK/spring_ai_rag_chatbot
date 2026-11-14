@@ -1,0 +1,84 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: spring-ai-language
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/lmretext?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${DB_PASSWORD}
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: ${REDIS_PASSWORD}
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  ai:
+    ollama:
+      base-url: http://localhost:11434
+      chat:
+        model: qwen2.5:3b-instruct
+        options:
+          temperature: 0.7
+          num_ctx: 4096
+      embedding:
+        model: all-minilm:22m
+
+    deepseek:
+      chat:
+        api-key: ${DEEPSEEK_API_KEY}
+        model: deepseek-chat
+        enable-thinking: false
+    agnes:
+      chat:
+        api-key: ${AGNES_API_KEY}
+        base-url: https://apihub.agnes-ai.com
+        model: agnes-2.5-flash
+
+    vectorstore:
+      chroma:
+        client:
+          base-url: http://localhost:8000
+        collection-name: rag_kb_collection
+        initialize-schema: true
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never
+
+logging:
+  level:
+    org.springframework.ai.chat.client.advisor: DEBUG
+    org.mybatis: DEBUG
+    org.springframework.ai.ollama: TRACE
+    com.example.spring_ai_language: DEBUG
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.example.spring_ai_language.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+app:
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    high-confidence-threshold: 0.75   # ≥0.7 → 严格 RAG，只引用资料答
+    med-confidence-threshold: 0.4    # 0.4~0.7 → 混合，资料+模型知识一起用
+    min-top-k: 5    # 至少查几条
+    top-k: 5
+    rerank-top-k: 10
+  sensitive-words:
+    enable: true
+    words: "敏感词1,敏感词2"

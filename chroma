@@ -1,0 +1,5 @@
+chroma
+chroma run --path C:\Users\34730\chroma-data
+
+redis
+redis-server.exe redis.windows.conf
