@@ -135,10 +135,26 @@ public class ChatController {
      * 避免对这类问题先做无意义的向量检索
      */
     private boolean isLikelySqlQuestion(String q) {
-        return q != null && (
-                (q.contains("查") || q.contains("多少") || q.contains("统计") || q.contains("总数"))
-                        && (q.contains("订单") || q.contains("销售额") || q.contains("销售")
-                        || q.contains("员工") || q.contains("数据") || q.contains("记录"))
-        );
+        if (q == null || q.isBlank()) return false;
+
+        // 条件A：有查询/统计意图
+        boolean hasQueryIntent = q.matches(".*[查查查找问问看看].*")
+                || q.contains("多少") || q.contains("统计")
+                || q.contains("总数") || q.contains("哪些")
+                || q.contains("排名") || q.contains("趋势");
+
+        // 条件B：常见业务名词（根据实际数据库表字段补充）
+        boolean hasBizKeyword = q.contains("航班") || q.contains("机票")
+                || q.contains("员工") || q.contains("部门")
+                || q.contains("订单") || q.contains("销售额")
+                || q.contains("销售") || q.contains("库存")
+                || q.contains("工资") || q.contains("报销")
+                || q.contains("请假") || q.contains("考勤")
+                || q.contains("业绩") || q.contains("客户")
+                || q.contains("合同") || q.contains("项目")
+                || q.contains("记录") || q.contains("数据")
+                || q.contains("人数") || q.contains("金额");
+
+        return hasQueryIntent && hasBizKeyword;
     }
 }

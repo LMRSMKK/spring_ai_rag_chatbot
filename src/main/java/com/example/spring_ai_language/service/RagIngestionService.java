@@ -62,7 +62,7 @@ public class RagIngestionService {
         String content;
         try (InputStream is=file.getInputStream()){
             // .md/.txt 等纯文本直接用字节读，避免 Tika 默认无 parser 时返回空串
-            if ("md".equals(fileType)||"txt".equals(fileType)||"text".equals(fileType)){
+            if ("md".equals(fileType)||"txt".equals(fileType)||"text".equals(fileType)||"pdf".equals(fileType)||"docx".equals(fileType)) {
                 content=new String(is.readAllBytes(),"UTF-8").strip();
             }else{
                 content=tika.parseToString(is).strip();

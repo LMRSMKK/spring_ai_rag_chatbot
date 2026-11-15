@@ -2,53 +2,70 @@ package com.example.spring_ai_language.service;
 
 import com.example.spring_ai_language.entity.ScoredDocument;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chroma.vectorstore.ChromaApi;
+import org.springframework.ai.chroma.vectorstore.ChromaApi.QueryRequest;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.ai.document.Document;
-import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-
 
 @Service
 @Slf4j
 public class VectorScoreService {
+
     @Value("${spring.ai.vectorstore.chroma.client.base-url:http://localhost:8000}")
     private String chromaBaseUrl;
-    @Value("${spring.ai.vectorstore.chroma.collection-name}")
+
+    @Value("${spring.ai.vectorstore.chroma.collection-name:rag_kb_collection}")
     private String collectionName;
+
+    private static final String TENANT = "SpringAiTenant";
+    private static final String DATABASE = "SpringAiDatabase";
+
+    private final EmbeddingModel embeddingModel;
+    private ChromaApi chromaApi;
+
+    public VectorScoreService(EmbeddingModel embeddingModel) {
+        this.embeddingModel = embeddingModel;
+    }
+
+    private ChromaApi getChromaApi() {
+        if (chromaApi == null) {
+            String baseUrl = chromaBaseUrl != null && chromaBaseUrl.endsWith("/")
+                    ? chromaBaseUrl.substring(0, chromaBaseUrl.length() - 1) : chromaBaseUrl;
+            this.chromaApi = ChromaApi.builder().baseUrl(baseUrl).build();
+        }
+        return chromaApi;
+    }
 
     public List<ScoredDocument> scoredSearch(String query, int topK) {
         try {
-            RestClient client = RestClient.create(chromaBaseUrl);
-            Map<String, Object> body = new HashMap<>();
-            body.put("query_texts", List.of(query));
-            body.put("n_results", topK);
-            body.put("include", List.of("documents", "metadatas", "distances"));
+            float[] embedding = embeddingModel.embed(query);
+            String colId = getChromaApi().getCollection(TENANT, DATABASE, collectionName).id();
 
-            Map<?, ?> resp = client.post()
-                    .uri("/api/v1/collections/" + collectionName + "/query")
-                    .header("Content-Type", "application/json")
-                    .body(body)
-                    .retrieve()
-                    .toEntity(Map.class)
-                    .getBody();
+            QueryRequest req = new QueryRequest(
+                    List.of(embedding),
+                    topK,
+                    null,
+                    List.of(QueryRequest.Include.DOCUMENTS,
+                            QueryRequest.Include.METADATAS,
+                            QueryRequest.Include.DISTANCES)
+            );
 
-            List<List<String>> allDocs = (List<List<String>>) resp.get("documents");
-            List<List<Double>> allDists = (List<List<Double>>) resp.get("distances");
+            var resp = getChromaApi().queryCollection(TENANT, DATABASE, colId, req);
 
-            List<String> docs = allDocs.get(0);
-            List<Double> dists = allDists.get(0);
+            List<String> docs      = resp.documents().get(0);
+            List<Double> dists     = resp.distances().get(0);
+            List<java.util.Map<String, Object>> metas = resp.metadata().get(0);
 
             List<ScoredDocument> result = new ArrayList<>();
             for (int i = 0; i < docs.size(); i++) {
-                double dist = dists.get(i);
+                double dist  = dists.get(i);
                 double score = 1.0 / (1.0 + dist);
-                List<Map<String, Object>> allMetas = (List<Map<String, Object>>) ((List<?>) resp.get("metadatas")).get(0);
-                Document doc = new Document(docs.get(i), allMetas.get(i));
+                Document doc = new Document(docs.get(i), metas.get(i));
                 ScoredDocument sd = new ScoredDocument();
                 sd.setDocument(doc);
                 sd.setScore(score);
