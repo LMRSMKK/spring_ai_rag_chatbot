@@ -890,11 +890,11 @@
       const costMs = data.data?.costMs ?? 0;
       const refCount = data.data?.refCount ?? 0;
       const answer = data.data?.answer || data.message || '服务器未返回有效内容';
-      const sources = [];
-      if (data.data && data.data.answer) {
-        sources.push(currentModel === 'deepseek' ? '深空rag绘制' : '奥拉马绘制');
-      }
-      addMessage(answer, 'ai', sources.length ? sources : null, null, costMs, refCount);
+      const mode = data.data?.mode || 'rag';
+      const relevance = data.data?.relevance ?? 0;
+      const srcArr = data.data?.sources || null;
+      currentMode = mode;
+      addMessage(answer, 'ai', srcArr, null, costMs, refCount, mode, relevance);
       isProcessing = false;
       sendBtn.disabled = !document.getElementById('userInput').value.trim();
     } catch (err) {
@@ -911,14 +911,15 @@
     }
   }
 
-  function addMessage(text, role, sources, timeStr, costMs, refCount) {
+  function addMessage(text, role, sources, timeStr, costMs, refCount, mode, relevance) {
     const container = document.getElementById('chatContainer');
     const div = document.createElement('div');
     div.className = 'message';
 
     const now = timeStr || (new Date().getHours().toString().padStart(2,'0') + ':' + new Date().getMinutes().toString().padStart(2,'0'));
-    const displayCostMs = costMs != null ? costMs : (Math.random()*2+0.5)*1000;
-    const displayRefCount = refCount != null ? refCount : Math.floor(Math.random()*3)+1;
+    const displayCostMs = costMs != null ? costMs : 0;
+    const displayRefCount = refCount != null ? refCount : 0;
+    const displayRelevance = relevance != null ? relevance.toFixed(2) : '';
 
     let sourcesHtml = '';
     if (sources && sources.length) {
@@ -940,7 +941,11 @@
         <div class="msg-role">${role === 'user' ? '你' : 'AI 助手 · DeepSeek V3'}${role === 'ai' ? ' · ' + timeStr : ''}</div>
         <div class="msg-bubble ${role === 'user' ? 'user-bubble' : ''}">${formattedText}</div>
         ${sourcesHtml}
-        ${role === 'ai' ? `<div class="msg-meta"><span>⏱ 耗时 ${(displayCostMs/1000).toFixed(1)}s</span><span>📄 引用 ${displayRefCount} 条资料</span><span>${currentMode === 'sql' ? '🗄 Text-to-SQL' : '🔍 RAG 检索'}</span></div>` : ''}
+        ${role === 'ai' ? `<div class="msg-meta">
+  <span>⏱ 耗时 ${(displayCostMs/1000).toFixed(1)}s</span>
+  ${displayRefCount > 0 ? '<span>📄 引用 ' + displayRefCount + ' 条资料</span>' : ''}
+  ${mode === 'knowledge' ? '<span>🧠 通用知识回答</span>' : mode === 'sql' ? '<span>🗄 Text-to-SQL</span>' : '<span>🔍 RAG 检索</span>' + (displayRelevance ? ' · 相关度 ' + displayRelevance : '')}
+</div>` : ''}
       </div>
     `;
     container.appendChild(div);

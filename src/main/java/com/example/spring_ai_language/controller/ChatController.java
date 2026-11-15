@@ -73,16 +73,6 @@ public class ChatController {
             askResult = ragQueryService.ask(kbId, userId, sessionId, question, client, topK, temperature);
         }
 
-        //QuestionRouter.Route route = router.route(question);
-     /*   if(route == QuestionRouter.Route.SQL){
-            String sqlAnswer = textToSqlService.anwserWithSql(question, userId, client);
-            askResult = new AskResult();
-            askResult.setAnswer(sqlAnswer);
-            askResult.setCostMs(0);
-            askResult.setRefCount(0);
-        } else {
-            askResult = ragQueryService.ask(kbId, userId, sessionId, question, client,topK, temperature);
-        }*/
         return Map.of("code", 200, "message", "success",
                 "data", Map.of(
                         "answer",   askResult.getAnswer(),
@@ -91,6 +81,7 @@ public class ChatController {
                         "model",    model,
                         "costMs",     askResult.getCostMs(),
                         "refCount",   askResult.getRefCount(),
+                        "relevance",  askResult.getRelevance(),
                         "blocked",    askResult.isBlocked()
                 ));
     }
