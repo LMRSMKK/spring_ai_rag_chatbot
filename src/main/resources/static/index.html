@@ -666,6 +666,18 @@
     return res.json();
   }
 
+  // ── Mode Label Helper ────────────────────────────────────
+  function getModeLabel(mode, relevance) {
+    if (!mode) return '🔍 RAG 检索';
+    switch (mode) {
+      case 'sql':        return '🗄 Text-to-SQL';
+      case 'knowledge':  return '🧠 通用知识回答';
+      case 'rag_with_knowledge': return '🧩 混合回答';
+      case 'rag':
+      default:           return '🔍 RAG 检索 · 相关度 ' + relevance.toFixed(2);
+    }
+  }
+
   // ── Mock Responses ─────────────────────────────────────
   const mockResponses = {
     default: `根据知识库中的相关资料，我来为您解答这个问题：
@@ -895,6 +907,9 @@
       const srcArr = data.data?.sources || null;
       currentMode = mode;
       addMessage(answer, 'ai', srcArr, null, costMs, refCount, mode, relevance);
+      // 更新顶部模式标签
+      const badge = document.querySelector('.model-badge');
+      if (badge) badge.textContent = getModeLabel(mode, relevance);
       isProcessing = false;
       sendBtn.disabled = !document.getElementById('userInput').value.trim();
     } catch (err) {
@@ -944,7 +959,10 @@
         ${role === 'ai' ? `<div class="msg-meta">
   <span>⏱ 耗时 ${(displayCostMs/1000).toFixed(1)}s</span>
   ${displayRefCount > 0 ? '<span>📄 引用 ' + displayRefCount + ' 条资料</span>' : ''}
-  ${mode === 'knowledge' ? '<span>🧠 通用知识回答</span>' : mode === 'sql' ? '<span>🗄 Text-to-SQL</span>' : '<span>🔍 RAG 检索</span>' + (displayRelevance ? ' · 相关度 ' + displayRelevance : '')}
+  ${mode === 'sql' ? '<span>🗄 Text-to-SQL</span>' :
+    mode === 'knowledge' ? '<span>🧠 通用知识回答</span>' :
+    mode === 'rag_with_knowledge' ? '<span>🧩 混合回答</span>' :
+    '<span>🔍 RAG 检索</span>' + (displayRelevance ? ' · 相关度 ' + displayRelevance : '')}
 </div>` : ''}
       </div>
     `;
