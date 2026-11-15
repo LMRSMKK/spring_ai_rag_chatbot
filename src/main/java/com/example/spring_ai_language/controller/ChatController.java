@@ -36,7 +36,9 @@ public class ChatController {
     @Autowired
     @Qualifier("deepSeekChatClient")
     private org.springframework.ai.chat.client.ChatClient deepSeekClient;
-
+    @Autowired
+    @Qualifier("agnesChatClient")
+    private ChatClient agnesClient;
     @Autowired
     @Qualifier("ollamaChatClient")
     private org.springframework.ai.chat.client.ChatClient ollamaClient;
@@ -56,8 +58,14 @@ public class ChatController {
         log.info("[请求] userId={} sessionId={} kbId={} model={} question={}", userId, sessionId, kbId, model, question);
 
         // 根据模型选择对应的 ChatClient
-        ChatClient client = "ollama".equalsIgnoreCase(model)
-                ? ollamaClient : deepSeekClient;
+        ChatClient client;
+        if ("ollama".equalsIgnoreCase(model)) {
+            client = ollamaClient;
+        } else if ("agnes".equalsIgnoreCase(model)) {
+            client = agnesClient;
+        } else {
+            client = deepSeekClient;
+        }
 
         AskResult askResult;
         if (isLikelySqlQuestion(question)) {

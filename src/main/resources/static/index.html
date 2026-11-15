@@ -583,6 +583,7 @@
         <select class="select-input" style="width:120px" id="modelSelect" onchange="switchModel(this.value)">
           <option value="deepseek" selected>DeepSeek V3</option>
           <option value="ollama">Ollama Qwen2.5</option>
+          <option value="agnes">Agnes 2.5 Flash</option>
         </select>
       </div>
       <div class="setting-row">
@@ -644,7 +645,7 @@
   // ── State ──────────────────────────────────────────────
   let isProcessing = false;
   let currentMode = 'rag'; // 'rag' | 'sql'
-  let currentModel = localStorage.getItem('current_model') || 'deepseek'; // 'deepseek' | 'ollama'
+  let currentModel = localStorage.getItem('current_model') || 'deepseek'; // 'deepseek' | 'ollama' | 'agnes'
   let sessionId = localStorage.getItem("current_session_id") || generateId();
   let knowledgeBaseId = localStorage.getItem('current_knowledge_base_id') || 'default_kb';
 
@@ -808,8 +809,9 @@
     currentModel = model;
     localStorage.setItem('current_model', model);
     const badge = document.querySelector('.model-badge');
-    if (badge) badge.textContent = model === 'deepseek' ? 'DeepSeek V3' : 'Ollama Qwen2.5';
-    showToast(`已切换到 ${model === 'deepseek' ? 'DeepSeek V3' : 'Ollama Qwen2.5'}`, 'info');
+    const label = model === 'deepseek' ? 'DeepSeek V3' : model === 'ollama' ? 'Ollama Qwen2.5' : 'Agnes 2.5 Flash';
+    if (badge) badge.textContent = label;
+    showToast(`已切换到 ${label}`, 'info');
   }
 
   function toggleUploadPanel() {
@@ -869,7 +871,7 @@
     typingDiv.innerHTML = `
       <div class="msg-avatar ai">🧠</div>
       <div class="msg-body">
-        <div class="msg-role">AI 助手 · ${currentModel === 'deepseek' ? 'DeepSeek V3' : 'Ollama Qwen2.5'}</div>
+        <div class="msg-role">AI 助手 · ${currentModel === 'deepseek' ? 'DeepSeek V3' : currentModel === 'ollama' ? 'Ollama Qwen2.5' : 'Agnes 2.5 Flash'}</div>
         <div class="msg-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
       </div>
     `;
