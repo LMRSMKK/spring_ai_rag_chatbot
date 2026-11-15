@@ -59,9 +59,22 @@ public class ChatController {
         ChatClient client = "ollama".equalsIgnoreCase(model)
                 ? ollamaClient : deepSeekClient;
 
-        QuestionRouter.Route route = router.route(question);
         AskResult askResult;
-        if(route == QuestionRouter.Route.SQL){
+        if (isLikelySqlQuestion(question)) {
+            // SQL 快路径：关键词命中 → 直接走 Text-to-SQL
+            String sqlAnswer = textToSqlService.anwserWithSql(question, userId, client);
+            askResult = new AskResult();
+            askResult.setAnswer(sqlAnswer);
+            askResult.setCostMs(0);
+            askResult.setRefCount(0);
+            askResult.setMode("sql");
+        } else {
+            // 默认走 RAG 管道（内部自己判断 relevance）
+            askResult = ragQueryService.ask(kbId, userId, sessionId, question, client, topK, temperature);
+        }
+
+        //QuestionRouter.Route route = router.route(question);
+     /*   if(route == QuestionRouter.Route.SQL){
             String sqlAnswer = textToSqlService.anwserWithSql(question, userId, client);
             askResult = new AskResult();
             askResult.setAnswer(sqlAnswer);
@@ -69,12 +82,12 @@ public class ChatController {
             askResult.setRefCount(0);
         } else {
             askResult = ragQueryService.ask(kbId, userId, sessionId, question, client,topK, temperature);
-        }
+        }*/
         return Map.of("code", 200, "message", "success",
                 "data", Map.of(
                         "answer",   askResult.getAnswer(),
                         "sessionId",sessionId,
-                        "mode",     route.name(),
+                        "mode",     askResult.getMode(),
                         "model",    model,
                         "costMs",     askResult.getCostMs(),
                         "refCount",   askResult.getRefCount(),
@@ -124,6 +137,17 @@ public class ChatController {
         String sessionId = body.get("sessionId");
         if (sessionId == null) return Result.error(400, "sessionId 不能为空");
         return Result.success(chatService.clearSession(sessionId));
+    }
 
+    /**
+     * 启发式快筛：问题包含明确的数据查询关键词时，直接走 SQL 路径
+     * 避免对这类问题先做无意义的向量检索
+     */
+    private boolean isLikelySqlQuestion(String q) {
+        return q != null && (
+                (q.contains("查") || q.contains("多少") || q.contains("统计") || q.contains("总数"))
+                        && (q.contains("订单") || q.contains("销售额") || q.contains("销售")
+                        || q.contains("员工") || q.contains("数据") || q.contains("记录"))
+        );
     }
 }
