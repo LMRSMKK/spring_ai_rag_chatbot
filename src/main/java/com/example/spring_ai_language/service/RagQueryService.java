@@ -179,13 +179,19 @@ public class RagQueryService {
 
     private void saveAndReturn(String sessionId, String userId, String question, String answer, long costMs) {
         ChatMessage qMsg = new ChatMessage();
-        qMsg.setSessionId(sessionId); qMsg.setUserId(userId); qMsg.setRole("user");
-        qMsg.setContent(question); qMsg.setCostMs((int) costMs);
+        qMsg.setSessionId(sessionId);
+        qMsg.setUserId(userId);
+        qMsg.setRole("user");
+        qMsg.setContent(question);
+        qMsg.setCostMs((int) costMs);
         chatMessageMapper.insert(qMsg);
 
         ChatMessage aMsg = new ChatMessage();
-        aMsg.setSessionId(sessionId); aMsg.setUserId(userId); aMsg.setRole("assistant");
-        aMsg.setContent(answer); aMsg.setCostMs((int) costMs);
+        aMsg.setSessionId(sessionId);
+        aMsg.setUserId(userId);
+        aMsg.setRole("assistant");
+        aMsg.setContent(answer);
+        aMsg.setCostMs((int) costMs);
         chatMessageMapper.insert(aMsg);
     }
 }

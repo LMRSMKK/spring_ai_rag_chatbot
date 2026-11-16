@@ -13,7 +13,7 @@ import java.util.List;
 public interface ChatMessageMapper extends BaseMapper<ChatMessage> {
     @Select("SELECT * FROM chat_message" +
             "        WHERE session_id = #{sessionId}" +
-            "        ORDER BY create_time DESC" +
+            "        ORDER BY create_time ASC" +
             "            LIMIT #{n}")
     List<ChatMessage> selectRecent(@Param("sessionId") String sessionId, @Param("n") int n);
 
