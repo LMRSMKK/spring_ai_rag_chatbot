@@ -46,7 +46,7 @@ public class ChatService {
         for (ChatMessage m : latestMap.values()) {
             SessionSummary s = new SessionSummary();
             s.setSessionId(m.getSessionId());
-            s.setTitle(truncate(m.getContent(), 30));
+            s.setTitle(truncate(m.getContent()));
             s.setLastMessageTime(m.getCreateTime());
             summaries.add(s);
         }
@@ -88,7 +88,7 @@ public class ChatService {
     //加载历史对话
     public Object getMessage(String sessionId, int limit) {
         List<ChatMessage> messages = chatMessageMapper.selectAllBySession(sessionId, limit);
-        List<Map<String, Object>> result = messages.stream().map(m -> {
+        return messages.stream().map(m -> {
             Map<String, Object> map = new HashMap<>();
             map.put("role", m.getRole());
             map.put("content", m.getContent());
@@ -96,7 +96,6 @@ public class ChatService {
             map.put("costMs", m.getCostMs());
             return map;
         }).collect(Collectors.toList());
-        return result;
     }
 
     //获取分享链接详情（通过 shareToken 查消息列表）
@@ -127,7 +126,8 @@ public class ChatService {
         return Result.success(result);
     }
 
-    private String truncate(String text, int maxLen) {
+    private String truncate(String text) {
+        int maxLen=30;
         if (text == null) return "";
         return text.length() <= maxLen ? text : text.substring(0, maxLen) + "...";
     }

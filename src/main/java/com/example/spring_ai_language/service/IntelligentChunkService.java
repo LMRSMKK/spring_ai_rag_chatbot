@@ -11,7 +11,6 @@ import java.util.regex.Pattern;
 
 /**
  * 智能文本分片服务
- *
  * 策略选择：
  *   - Markdown：按标题层级分段，保证每个 chunk 是一个完整的章节
  *   - 普通文本：按段落（双换行）分割，再按字符数二次切分
@@ -57,7 +56,7 @@ public class IntelligentChunkService {
         //最后一段
         String tail = content.substring(lastPos).stripTrailing();
         if (!tail.isEmpty() && tail.length() > 20) {
-            chunks.add(new TextChunk(null, tail, fileName, kbId, userId, idx++));
+            chunks.add(new TextChunk(null, tail, fileName, kbId, userId,idx++));
         }
         //太短没触发标题匹配，退回备用方案
         if (chunks.isEmpty() && content.length() > 50) {
