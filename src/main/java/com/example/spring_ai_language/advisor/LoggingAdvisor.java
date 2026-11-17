@@ -9,6 +9,7 @@ import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.Ordered;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -23,11 +24,8 @@ import java.util.stream.Collectors;
 @Component
 public class LoggingAdvisor implements BaseAdvisor, Ordered {
 
-    private final LogOperationMapper logOperationMapper;
-
-    public LoggingAdvisor(LogOperationMapper logOperationMapper) {
-        this.logOperationMapper = logOperationMapper;
-    }
+    @Autowired
+    private LogOperationMapper logOperationMapper;
 
     @Override
     public ChatClientRequest before(ChatClientRequest request, AdvisorChain chain) {

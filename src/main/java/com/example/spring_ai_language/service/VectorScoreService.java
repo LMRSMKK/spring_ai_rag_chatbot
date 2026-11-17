@@ -6,6 +6,7 @@ import org.springframework.ai.chroma.vectorstore.ChromaApi;
 import org.springframework.ai.chroma.vectorstore.ChromaApi.QueryRequest;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -21,16 +22,12 @@ public class VectorScoreService {
 
     @Value("${spring.ai.vectorstore.chroma.collection-name:rag_kb_collection}")
     private String collectionName;
-
+    @Autowired
+    private ChromaApi chromaApi;
+    @Autowired
+    private EmbeddingModel embeddingModel;
     private static final String TENANT = "SpringAiTenant";
     private static final String DATABASE = "SpringAiDatabase";
-
-    private final EmbeddingModel embeddingModel;
-    private ChromaApi chromaApi;
-
-    public VectorScoreService(EmbeddingModel embeddingModel) {
-        this.embeddingModel = embeddingModel;
-    }
 
     private ChromaApi getChromaApi() {
         if (chromaApi == null) {

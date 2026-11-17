@@ -1,6 +1,6 @@
 package com.example.spring_ai_language.controller;
 
-import com.example.spring_ai_language.Uitl.Result;
+import com.example.spring_ai_language.util.Result;
 import com.example.spring_ai_language.mapper.LogOperationMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;

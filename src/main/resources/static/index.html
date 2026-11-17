@@ -763,7 +763,7 @@
           Array.from(container.children).forEach(c => {
             if (!['welcomeScreen','exampleMsg'].includes(c.id)) c.remove();
           });
-          for (const m of data.data) { const ts=m.time?((typeof m.time==='string'&&m.time.includes('T'))?m.time.substring(11,16):m.time):null; addMessage(m.content,m.role,null,ts,m.costMs); }
+          for (const m of data.data) { const ts=m.time?((typeof m.time==='string'&&m.time.includes('T'))?m.time.substring(11,16):m.time):null; addMessage(m.content,m.role,null,ts,m.costMs,null,null,null,null,null); }
           scrollToBottom();
         }
       } catch(e) {}
@@ -895,7 +895,6 @@
         addMessage('⚠️ ' + (data.message || '请求失败'), 'ai');
         isProcessing = false; sendBtn.disabled = !document.getElementById('userInput').value.trim(); return;
       }
-      if (data.data?.sessionId) { localStorage.setItem('current_session_id', data.data.sessionId); sessionId = data.data.sessionId; }
       if (data.data?.blocked) {
         showToast('消息包含不当内容，已被截留', 'error');
         addMessage('您的消息包含不当内容，已屏蔽。', 'ai');
@@ -907,8 +906,10 @@
       const mode = data.data?.mode || 'rag';
       const relevance = data.data?.relevance ?? 0;
       const srcArr = data.data?.sources || null;
+      const tokensIn  = data.data?.tokensIn  ?? null;
+      const tokensOut = data.data?.tokensOut ?? null;
       currentMode = mode;
-      addMessage(answer, 'ai', srcArr, null, costMs, refCount, mode, relevance);
+      addMessage(answer, 'ai', srcArr, null, costMs, refCount, mode, relevance, tokensIn, tokensOut);
       // 更新顶部模式标签
       const badge = document.querySelector('.model-badge');
       if (badge) badge.textContent = getModeLabel(mode, relevance);
@@ -928,7 +929,7 @@
     }
   }
 
-  function addMessage(text, role, sources, timeStr, costMs, refCount, mode, relevance) {
+  function addMessage(text, role, sources, timeStr, costMs, refCount, mode, relevance, tokensIn, tokensOut) {
     const container = document.getElementById('chatContainer');
     const div = document.createElement('div');
     div.className = 'message';
@@ -937,6 +938,8 @@
     const displayCostMs = costMs != null ? costMs : 0;
     const displayRefCount = refCount != null ? refCount : 0;
     const displayRelevance = relevance != null ? relevance.toFixed(2) : '';
+    const displayTokensIn  = tokensIn  != null ? tokensIn  : null;
+    const displayTokensOut = tokensOut != null ? tokensOut : null;
 
     let sourcesHtml = '';
     if (sources && sources.length) {
@@ -965,6 +968,8 @@
     mode === 'knowledge' ? '<span>🧠 通用知识回答</span>' :
     mode === 'rag_with_knowledge' ? '<span>🧩 混合回答</span>' :
     '<span>🔍 RAG 检索</span>' + (displayRelevance ? ' · 相关度 ' + displayRelevance : '')}
+  ${displayTokensIn  != null ? '<span>📥 '+displayTokensIn+' tok</span>' : ''}
+  ${displayTokensOut != null ? '<span>📤 '+displayTokensOut+' tok</span>' : ''}
 </div>` : ''}
       </div>
     `;
@@ -1315,7 +1320,7 @@
         const data = await res.json();
         if (data.code === 200 && data.data && data.data.length > 0) {
           document.getElementById('welcomeScreen').style.display = 'none';
-          for (const m of data.data) addMessage(m.content, m.role, null, m.time, m.costMs);
+          for (const m of data.data) addMessage(m.content, m.role, null, m.time, m.costMs, null, null, null, null, null);
           scrollToBottom();
         }
       } catch(e) {}

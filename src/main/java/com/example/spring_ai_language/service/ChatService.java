@@ -1,8 +1,8 @@
 package com.example.spring_ai_language.service;
 
-import com.example.spring_ai_language.Uitl.Result;
+import com.example.spring_ai_language.util.Result;
 import com.example.spring_ai_language.entity.ChatMessage;
-import com.example.spring_ai_language.Uitl.SessionSummary;
+import com.example.spring_ai_language.util.SessionSummary;
 import com.example.spring_ai_language.mapper.ChatMessageMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,7 +22,7 @@ public class ChatService {
     @Autowired
     private ChatMessageMapper chatMessageMapper;
     @Autowired
-    private RedisTemplate<Object, Object> redisTemplate;
+    private RedisTemplate<String, String> redisTemplate;
 
     private static final int SHARE_EXPIRE_DAYS = 7;
 
@@ -105,7 +105,7 @@ public class ChatService {
             return Result.error(400, "sessionId不能为空");
         }
         String shareKey = "share:" + sessionId;
-        Object val = redisTemplate.opsForValue().get(shareKey);
+        String val = redisTemplate.opsForValue().get(shareKey);
         String storedSessionId;
         try {
             storedSessionId = val != null ? val.toString() : null;

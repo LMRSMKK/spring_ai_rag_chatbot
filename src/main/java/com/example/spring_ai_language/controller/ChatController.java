@@ -1,8 +1,7 @@
 package com.example.spring_ai_language.controller;
 
-import com.example.spring_ai_language.Uitl.Result;
+import com.example.spring_ai_language.util.Result;
 import com.example.spring_ai_language.entity.AskResult;
-import com.example.spring_ai_language.entity.ChatMessage;
 import com.example.spring_ai_language.service.ChatService;
 import com.example.spring_ai_language.service.QuestionRouter;
 import com.example.spring_ai_language.service.RagQueryService;
@@ -14,7 +13,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -44,7 +42,7 @@ public class ChatController {
     private org.springframework.ai.chat.client.ChatClient ollamaClient;
 
     @PostMapping("/ask")
-    public Map<String,Object> ask(@RequestBody Map<String,String> body){
+    public Result<?> ask(@RequestBody Map<String,String> body){
         String question = body.get("question");
         String userId = body.get("userId");
         String sessionId = body.get("sessionId");
@@ -53,7 +51,7 @@ public class ChatController {
         int topK = body.containsKey("topK") ? Integer.parseInt(body.get("topK")) : 5;
         double temperature = body.containsKey("temp") ? Double.parseDouble(body.get("temp")) : 0.7;
         if(question.isBlank()){
-            return Map.of("code", 400, "message", "问题不能为空");
+            return Result.error(400,"问题不能为空");
         }
         log.info("[请求] userId={} sessionId={} kbId={} model={} question={}", userId, sessionId, kbId, model, question);
 
@@ -78,10 +76,10 @@ public class ChatController {
             askResult.setMode("sql");
         } else {
             // 默认走 RAG 管道（内部自己判断 relevance）
-            askResult = ragQueryService.ask(kbId, userId, sessionId, question, client, topK, temperature);
+            askResult = ragQueryService.ask(kbId, userId, sessionId, topK, temperature);
         }
 
-        return Map.of("code", 200, "message", "success",
+        return Result.success(Map.of("code", 200, "message", "success",
                 "data", Map.of(
                         "answer",   askResult.getAnswer(),
                         "sessionId",sessionId,
@@ -90,8 +88,10 @@ public class ChatController {
                         "costMs",     askResult.getCostMs(),
                         "refCount",   askResult.getRefCount(),
                         "relevance",  askResult.getRelevance(),
-                        "blocked",    askResult.isBlocked()
-                ));
+                        "blocked",    askResult.isBlocked(),
+                        "tokensIn",   askResult.getTokensIn(),
+                        "tokensOut",  askResult.getTokensOut()
+                )));
     }
 
     //加载对话

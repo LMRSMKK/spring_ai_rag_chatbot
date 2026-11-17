@@ -45,6 +45,12 @@ public class ChromaConfig {
                 .build();
     }
 
+    @Bean
+    public ChromaApi create(){
+        String cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        return ChromaApi.builder().baseUrl(cleanBaseUrl).build();
+    }
+
     private void ensureTenantExists() {
         try {
             RestClient.create(baseUrl).post()

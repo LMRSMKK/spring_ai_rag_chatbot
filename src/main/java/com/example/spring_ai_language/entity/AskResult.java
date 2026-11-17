@@ -13,4 +13,8 @@ public class AskResult {
     private String mode;  // "rag" / "sql" / "knowledge"
     private double relevance;  // 最高相关片段的相似度分数，0~1
     private List<String> sources; // 涉及的文档文件名列表
+    /** 本次请求的输入 token 数量（来自 LLM 响应） */
+    private Integer tokensIn;
+    /** 本次响应的输出 token 数量（来自 LLM 响应） */
+    private Integer tokensOut;
 }

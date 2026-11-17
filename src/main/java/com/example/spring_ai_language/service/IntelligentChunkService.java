@@ -31,7 +31,7 @@ public class IntelligentChunkService {
         if(content.isEmpty())return List.of();
         return switch (fileType.toLowerCase()){
             case "markdown","md"-> byHeadings(content,kbId,userId,fileName);
-            default -> byParagraPhs(content,kbId,userId,fileName);
+            default -> byParagraphs(content,kbId,userId,fileName);
         };
     }
 
@@ -70,7 +70,7 @@ public class IntelligentChunkService {
     // ─────────────────────────────────────────────
     // 策略2：按段落切分，超长则二次按字符数切
     // ─────────────────────────────────────────────
-    private List<TextChunk> byParagraPhs(String content, String kbId, String userId, String fileName) {
+    private List<TextChunk> byParagraphs(String content, String kbId, String userId, String fileName) {
         String[] paragraphs=content.split("\\n\\s*\\n");
         List<TextChunk> chunks=new ArrayList<>();
         StringBuilder sb=new StringBuilder();
@@ -104,7 +104,7 @@ public class IntelligentChunkService {
         int start=0;
         while(start<content.length()){
             int end=Math.min(start+chunkSize,content.length());
-            int breakAt = findBreadkPoint(content,start,end);
+            int breakAt = findBreakPoint(content,start,end);
             String segment=content.substring(start,end).strip();
             if(!segment.isBlank()){
                 chunks.add(new TextChunk(null,segment,fileName,kbId,userId,idx++));
@@ -115,7 +115,7 @@ public class IntelligentChunkService {
     }
 
     /** 在 [start, end] 范围内找最佳断点（优先换行或标点） */
-    private int findBreadkPoint(String content, int start, int end) {
+    private int findBreakPoint(String content, int start, int end) {
         String window=content.substring(start,end);
         //优先在换行处断开
         int nl=window.lastIndexOf('\n');

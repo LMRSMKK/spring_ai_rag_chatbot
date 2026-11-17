@@ -14,36 +14,61 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.stereotype.Component;
 
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Advisor：对用户输入和模型输出做敏感词过滤
+ * Advisor：对用户输入和模型输出做敏感词过滤（Aho-Corasick 前缀树实现）
  */
 @Slf4j
 @Component
 public class SensitiveWordAdvisor implements BaseAdvisor, Ordered {
 
-    private final Set<String> sensitiveWords;
+    private final TreeNode root = new TreeNode();
 
     public SensitiveWordAdvisor(
             @Value("${app.sensitive-words.words:敏感词示例1,敏感词示例2}") String words) {
-        this.sensitiveWords = new HashSet<>(Arrays.asList(words.split(",")));
+        for (String w : words.split(",")) {
+            insert(w.strip());
+        }
+    }
+
+    /** 逐词插入前缀树 */
+    private void insert(String word) {
+        if (word.isEmpty()) return;
+        TreeNode node = root;
+        for (char c : word.toCharArray()) {
+            node.children.computeIfAbsent(c, k -> new TreeNode());
+            node = node.children.get(c);
+        }
+        node.isEnd = true;
+    }
+
+    /** 单次扫描判断文本是否包含任意敏感词，O(n) */
+    private boolean containsSensitive(String text) {
+        if (text == null || text.isEmpty()) return false;
+        for (int i = 0; i < text.length(); i++) {
+            TreeNode node = root;
+            for (int j = i; j < text.length(); j++) {
+                char c = text.charAt(j);
+                node = node.children.get(c);
+                if (node == null) break;
+                if (node.isEnd) return true;
+            }
+        }
+        return false;
     }
 
     @Override
     public ChatClientRequest before(ChatClientRequest request, AdvisorChain chain) {
         String input = extractInput(request);
-        for (String word : sensitiveWords) {
-            if (input.contains(word.strip())) {
-                log.warn("[敏感词拦截] 用户输入包含敏感词: {}", word);
-                return request.mutate()
-                        .context("__sensitive_blocked", true)
-                        .build();
-            }
+        if (containsSensitive(input)) {
+            log.warn("[敏感词拦截] 用户输入命中敏感词");
+            return request.mutate()
+                    .context("__sensitive_blocked", true)
+                    .build();
         }
         return request;
     }
@@ -58,19 +83,16 @@ public class SensitiveWordAdvisor implements BaseAdvisor, Ordered {
         }
         String output = response.chatResponse()
                 .getResult().getOutput().getText();
-        for (String word : sensitiveWords) {
-            if (output.contains(word.strip())) {
-                log.warn("[敏感词拦截] 模型输出包含敏感词: {}", word);
-                return response.mutate()
-                        .context("__intercepted", true)
-                        .chatResponse(safeBlockedResponse())
-                        .build();
-            }
+        if (containsSensitive(output)) {
+            log.warn("[敏感词拦截] 模型输出命中敏感词");
+            return response.mutate()
+                    .context("__intercepted", true)
+                    .chatResponse(safeBlockedResponse())
+                    .build();
         }
         return response;
     }
 
-    /** 构造一个"内容被屏蔽"的安全 ChatResponse */
     private ChatResponse safeBlockedResponse() {
         AssistantMessage blockedMsg = new AssistantMessage("您的消息包含不适当内容，已屏蔽。");
         return new ChatResponse(List.of(new Generation(blockedMsg)));
@@ -89,4 +111,10 @@ public class SensitiveWordAdvisor implements BaseAdvisor, Ordered {
 
     @Override
     public String getName() { return "sensitive-word-advisor"; }
+
+    /** 前缀树节点 */
+    static class TreeNode {
+        Map<Character, TreeNode> children = new HashMap<>();
+        boolean isEnd;
+    }
 }

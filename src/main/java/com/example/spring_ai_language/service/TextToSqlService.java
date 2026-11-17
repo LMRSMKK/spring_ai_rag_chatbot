@@ -48,8 +48,7 @@ public class TextToSqlService {
                     .call()
                     .chatResponse()
                     .getResult()
-                    .getOutput()
-                    .getText();
+                    .toString();
             // 清理 Ollama/部分 LLM 自动添加的 markdown 代码块包裹：```sql\n...\n```
             sql = raw.strip().replaceAll("(?s)^```\\w*\\s*|\\s*```$","").strip();
             log.debug("[TextToSql] 生成的SQL: {}", sql);
@@ -83,7 +82,6 @@ public class TextToSqlService {
                 .call()
                 .chatResponse()
                 .getResult()
-                .getOutput()
-                .getText();
+                .toString();
     }
 }

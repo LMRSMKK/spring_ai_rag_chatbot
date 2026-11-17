@@ -1,4 +1,4 @@
-package com.example.spring_ai_language.Uitl;
+package com.example.spring_ai_language.util;
 
 import lombok.Data;
 

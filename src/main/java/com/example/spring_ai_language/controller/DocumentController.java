@@ -1,6 +1,6 @@
 package com.example.spring_ai_language.controller;
 
-import com.example.spring_ai_language.Uitl.Result;
+import com.example.spring_ai_language.util.Result;
 import com.example.spring_ai_language.entity.KbDocument;
 import com.example.spring_ai_language.mapper.KbChunkMapper;
 import com.example.spring_ai_language.mapper.KbDocumentMapper;
@@ -38,6 +38,9 @@ public class DocumentController {
             @RequestParam("userId") String userId) {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("code",400,"message", "文件不能为空"));
+        }
+        if(file.getSize()>15*1024*1024){
+            return ResponseEntity.badRequest().body(Map.of("code",400,"message","文件不能超过15MB"));
         }
         try {
             ingestionService.ingest(file,knowledgeBaseId,userId);

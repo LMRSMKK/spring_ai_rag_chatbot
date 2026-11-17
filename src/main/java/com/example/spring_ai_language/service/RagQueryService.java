@@ -16,11 +16,16 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import static org.springframework.ai.util.json.JsonParser.fromJson;
+import static org.springframework.ai.util.json.JsonParser.toJson;
 
 @Service
 @Slf4j
@@ -32,11 +37,11 @@ public class RagQueryService {
     @Autowired
     private ChatClient client;
     @Autowired
-    private VectorStore vectorStore;
-    @Autowired
     private ChatMessageMapper chatMessageMapper;
     @Autowired
     private VectorScoreService vectorScoreService;
+    @Autowired
+    private RedisTemplate<String,String>redisTemplate;
 
     // ────────────────────────────────────────────
     // 配置参数
@@ -59,8 +64,8 @@ public class RagQueryService {
     /**
      * RAG问答主入口：检索 → 评分 → 按置信度选策略 → 调用LLM → 落库
      */
-    public AskResult ask(String knowledgeBaseId, String userId, String sessionId,
-                         String question, ChatClient client, int topK, double temperature) {
+    public AskResult ask(String userId, String sessionId,
+                         String question,  int topK, double temperature) {
         long startMs = System.currentTimeMillis();
 
         // ① 向量检索 + 相关性评分
@@ -107,8 +112,10 @@ public class RagQueryService {
         // ③ 写入DB并返回
         result.setAnswer(answer);
         result.setCostMs(System.currentTimeMillis() - startMs);
+        result.setTokensIn(llmResult.tokensIn);
+        result.setTokensOut(llmResult.tokensOut);
         saveAndReturn(sessionId, userId, question, answer, result.getCostMs(), llmResult.tokensIn, llmResult.tokensOut);
-        log.info("[问答] user={} mode={} relevance={} refs={}",
+        log.debug("[问答] user={} mode={} relevance={} refs={}",
                 userId, result.getMode(), String.format("%.2f", maxRelevance), result.getRefCount());
         return result;
     }
@@ -121,13 +128,20 @@ public class RagQueryService {
      * 获取会话历史消息列表（已做按需压缩）。
      * 返回顺序为时间正序（老→新），供LLM正确理解对话上下文。
      */
+
     private List<ChatMessage> history(String sessionId) {
         try {
+            String cacheKey = "session:history:" + sessionId;
+            String json=redisTemplate.opsForValue().get(cacheKey);
+            if(json!=null){
+                return fromJson(json,List.class);
+            }
             // 1. 全量拉取（上限9999，保证不截断）
             List<ChatMessage> all = chatMessageMapper.selectAllBySession(sessionId, 9999);
             if (all == null || all.isEmpty()) {
                 return List.of();
             }
+            redisTemplate.opsForValue().set(cacheKey,toJson(all),30, TimeUnit.MINUTES);
             // 2. 超出阈值时触发压缩
             if (all.size() > SUMMARIZE_THRESHOLD * 2) {
                 compressOldMessages(sessionId, all);
@@ -225,7 +239,9 @@ public class RagQueryService {
         return callLlm(client, messages, temp);
     }
 
-    /** 统一LLM调用入口，同时提取prompt/completion token数量 */
+    /** 统一LLM调用入口，同时提取prompt/completion token数量。
+     * - DeepSeek / Agnes（OpenAI兼容）：从标准 Usage 接口直接读取
+     * - Ollama：Spring AI 1.0.3 不映射 token 字段，改用文本长度估算 */
     private LlmResult callLlm(ChatClient cli, List<Message> messages, double temp) {
         try {
             ChatClientResponse resp = cli.prompt()
@@ -234,15 +250,48 @@ public class RagQueryService {
                     .call().chatClientResponse();
             var chatResp = resp.chatResponse();
             var usage = chatResp.getMetadata().getUsage();
+            Integer promptTokens  = null;
+            Integer completionTok = null;
+            if (usage != null && usage.getPromptTokens() != null) {
+                // OpenAI / DeepSeek / Agnes：标准 Usage 接口直接可读
+                promptTokens  = usage.getPromptTokens();
+                completionTok = usage.getCompletionTokens();
+            } else {
+                // Ollama 未提供 Usage → 基于文本长度估算（每4字符≈1英文token，每1字符≈1中文token）
+                String inputText = messages.stream()
+                        .filter(m -> m instanceof UserMessage || m instanceof SystemMessage)
+                        .map(m -> m instanceof UserMessage ? ((UserMessage) m).getText()
+                             : ((SystemMessage) m).getText())
+                        .collect(Collectors.joining("\n"));
+                String outputText = chatResp.getResult().getOutput().getText();
+                promptTokens  = estimateTokens(inputText);
+                completionTok = estimateTokens(outputText);
+                log.debug("[Token估算] prompt={} completion={} (Ollama fallback)", promptTokens, completionTok);
+            }
             return new LlmResult(
                     chatResp.getResult().getOutput().getText(),
-                    usage != null ? usage.getPromptTokens() : null,
-                    usage != null ? usage.getCompletionTokens() : null
+                    promptTokens, completionTok
             );
         } catch (Exception e) {
             log.error("[LLM调用失败]: {}", e.getMessage());
             return new LlmResult("服务暂时不可用，请稍后再试。", null, null);
         }
+    }
+
+    /**
+     * 根据文本内容估算 token 数量。
+     * 中文字符每个约计为 1 token，英文字母每 4 个约计为 1 token，数字和标点按 1 字符 = 1 token 计算。
+     */
+    private int estimateTokens(String text) {
+        if (text == null || text.isBlank()) return 0;
+        long cn = 0, en = 0, other = 0;
+        for (char c : text.toCharArray()) {
+            if (c >= '\u4e00' && c <= '\u9fff') cn++;
+            else if (Character.isLetter(c)) en++;
+            else other++;
+        }
+        // 中文1字≈1token，英文4字母≈1token，数字/标点≈1token
+        return (int) Math.ceil(cn + (double) en / 4 + other);
     }
 
     // ════════════════════════════════════════════
