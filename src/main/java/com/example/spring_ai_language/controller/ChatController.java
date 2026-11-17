@@ -76,22 +76,21 @@ public class ChatController {
             askResult.setMode("sql");
         } else {
             // 默认走 RAG 管道（内部自己判断 relevance）
-            askResult = ragQueryService.ask(kbId, userId, sessionId, topK, temperature);
+            askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature);
         }
 
-        return Result.success(Map.of("code", 200, "message", "success",
-                "data", Map.of(
-                        "answer",   askResult.getAnswer(),
-                        "sessionId",sessionId,
-                        "mode",     askResult.getMode(),
-                        "model",    model,
-                        "costMs",     askResult.getCostMs(),
-                        "refCount",   askResult.getRefCount(),
-                        "relevance",  askResult.getRelevance(),
-                        "blocked",    askResult.isBlocked(),
-                        "tokensIn",   askResult.getTokensIn(),
-                        "tokensOut",  askResult.getTokensOut()
-                )));
+        Map<String, Object> data = new java.util.HashMap<>();
+        data.put("answer",   askResult.getAnswer());
+        data.put("sessionId", sessionId);
+        data.put("mode",     askResult.getMode() != null ? askResult.getMode() : "");
+        data.put("model",    model);
+        data.put("costMs",   askResult.getCostMs());
+        data.put("refCount", askResult.getRefCount());
+        data.put("relevance", askResult.getRelevance());
+        data.put("blocked",  askResult.isBlocked());
+        if (askResult.getTokensIn()  != null) data.put("tokensIn",  askResult.getTokensIn());
+        if (askResult.getTokensOut() != null) data.put("tokensOut", askResult.getTokensOut());
+        return Result.success(Map.of("code", 200, "message", "success", "data", data));
     }
 
     //加载对话

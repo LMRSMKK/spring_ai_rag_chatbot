@@ -14,6 +14,8 @@ import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -23,9 +25,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-
-import static org.springframework.ai.util.json.JsonParser.fromJson;
-import static org.springframework.ai.util.json.JsonParser.toJson;
 
 @Service
 @Slf4j
@@ -42,6 +41,8 @@ public class RagQueryService {
     private VectorScoreService vectorScoreService;
     @Autowired
     private RedisTemplate<String,String>redisTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ────────────────────────────────────────────
     // 配置参数
@@ -134,14 +135,14 @@ public class RagQueryService {
             String cacheKey = "session:history:" + sessionId;
             String json=redisTemplate.opsForValue().get(cacheKey);
             if(json!=null){
-                return fromJson(json,List.class);
+                return objectMapper.readValue(json, new TypeReference<List<ChatMessage>>(){});
             }
             // 1. 全量拉取（上限9999，保证不截断）
             List<ChatMessage> all = chatMessageMapper.selectAllBySession(sessionId, 9999);
             if (all == null || all.isEmpty()) {
                 return List.of();
             }
-            redisTemplate.opsForValue().set(cacheKey,toJson(all),30, TimeUnit.MINUTES);
+            redisTemplate.opsForValue().set(cacheKey,objectMapper.writeValueAsString(all),30, TimeUnit.MINUTES);
             // 2. 超出阈值时触发压缩
             if (all.size() > SUMMARIZE_THRESHOLD * 2) {
                 compressOldMessages(sessionId, all);
