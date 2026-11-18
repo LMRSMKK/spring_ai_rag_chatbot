@@ -19,12 +19,18 @@ public class TextToSqlService {
      *
      * @param question  用户自然语言问题
      * @param userId    用户ID（用于权限审计）
+     * @param sessionId 会话ID（用于查询历史记录）
      * @return 最终自然语言回答
      */
-    public String anwserWithSql(String question,String userId,ChatClient client){
+    public String anwserWithSql(String question, String userId, String sessionId, ChatClient client){
         // ①获取数据库表结构（作为Schema上下文发给LLM）
         String schema = sqlTool.getSchema();
         log.debug("[TextToSql] 获取到表结构，长度={}", schema.length());
+
+        // 构建会话上下文（让LLM知道如何查询历史）
+        String sessionContext = (sessionId != null && !sessionId.isBlank())
+                ? "当前会话ID: " + sessionId + "\n如需查询历史消息，请使用 session_id = '" + sessionId + "' 进行过滤\n"
+                : "";
 
         // ②让LLM生成SQL
         String generatePrompt = """
@@ -40,10 +46,13 @@ public class TextToSqlService {
                 【数据库表结构】\
                 %s\
 \
+                【会话上下文】\
+                %s\
+\
                 【用户问题】\
                 %s\
                 【你的输出（只有SQL，不要任何其他内容）】\
-                """.formatted(schema, question);
+                """.formatted(schema, sessionContext, question);
         String sql;
         try{
             String raw = client.prompt()

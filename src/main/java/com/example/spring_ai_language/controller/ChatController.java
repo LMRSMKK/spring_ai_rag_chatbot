@@ -68,12 +68,12 @@ public class ChatController {
         // 路由：启发式快筛命中 → 直接 SQL；否则调 LLM 二次判断，兜底走 RAG
         AskResult askResult;
         if (isLikelySqlQuestion(question)) {
-            askResult = doSqlAnswer(question, userId, client);
+            askResult = doSqlAnswer(question, userId, sessionId, client);
         } else {
             try {
                 QuestionRouter.Route route = router.route(question);
                 if (route == QuestionRouter.Route.SQL) {
-                    askResult = doSqlAnswer(question, userId, client);
+                    askResult = doSqlAnswer(question, userId, sessionId, client);
                 } else {
                     askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature);
                 }
@@ -170,9 +170,9 @@ public class ChatController {
     }
 
     /** 统一执行 Text-to-SQL，提取为私有方法供快筛和 LLM 路由共用 */
-    private AskResult doSqlAnswer(String question, String userId, ChatClient client) {
+    private AskResult doSqlAnswer(String question, String userId, String sessionId, ChatClient client) {
         long startMs = System.currentTimeMillis();
-        String answer = textToSqlService.anwserWithSql(question, userId, client);
+        String answer = textToSqlService.anwserWithSql(question, userId, sessionId, client);
         AskResult r = new AskResult();
         r.setAnswer(answer);
         r.setMode("sql");
