@@ -1,10 +1,12 @@
 package com.example.spring_ai_language.entity;
 
+import lombok.Builder;
 import lombok.Data;
 
 import java.util.List;
 
 @Data
+@Builder
 public class AskResult {
     private String answer;
     private long costMs;
@@ -17,4 +19,5 @@ public class AskResult {
     private Integer tokensIn;
     /** 本次响应的输出 token 数量（来自 LLM 响应） */
     private Integer tokensOut;
+    private boolean cancelled;   // true 表示被用户主动取消
 }
