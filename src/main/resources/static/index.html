@@ -909,10 +909,13 @@
       const tokensIn  = data.data?.tokensIn  ?? null;
       const tokensOut = data.data?.tokensOut ?? null;
       currentMode = mode;
-      addMessage(answer, 'ai', srcArr, null, costMs, refCount, mode, relevance, tokensIn, tokensOut);
-      // 更新顶部模式标签
+      // 更新顶部模型徽标（显示当前选中模型名，而非mode标签）
       const badge = document.querySelector('.model-badge');
-      if (badge) badge.textContent = getModeLabel(mode, relevance);
+      if (badge) {
+        const modelName = currentModel === 'deepseek' ? 'DeepSeek V3' : currentModel === 'ollama' ? 'Ollama Qwen2.5' : 'Agnes 2.5 Flash';
+        badge.textContent = modelName;
+      }
+      addMessage(answer, 'ai', srcArr, null, costMs, refCount, mode, relevance, tokensIn, tokensOut);
       isProcessing = false;
       sendBtn.disabled = !document.getElementById('userInput').value.trim();
     } catch (err) {
@@ -949,7 +952,7 @@
       </div>`;
     }
 
-    const formattedText = text
+      const formattedText = text
       .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -958,7 +961,7 @@
     div.innerHTML = `
       <div class="msg-avatar ${role}">${role === 'user' ? '我' : '🧠'}</div>
       <div class="msg-body">
-        <div class="msg-role">${role === 'user' ? '你' : 'AI 助手 · DeepSeek V3'}${role === 'ai' ? ' · ' + timeStr : ''}</div>
+        <div class="msg-role">${role === 'user' ? '你' : 'AI 助手 · ' + (currentModel === 'deepseek' ? 'DeepSeek V3' : currentModel === 'ollama' ? 'Ollama Qwen2.5' : 'Agnes 2.5 Flash')}${role === 'ai' ? ' · ' + timeStr : ''}</div>
         <div class="msg-bubble ${role === 'user' ? 'user-bubble' : ''}">${formattedText}</div>
         ${sourcesHtml}
         ${role === 'ai' ? `<div class="msg-meta">
@@ -991,7 +994,7 @@
     typingDiv.innerHTML = `
       <div class="msg-avatar ai">🧠</div>
       <div class="msg-body">
-        <div class="msg-role">AI 助手 · DeepSeek V3</div>
+        <div class="msg-role">AI 助手 · ${currentModel === 'deepseek' ? 'DeepSeek V3' : currentModel === 'ollama' ? 'Ollama Qwen2.5' : 'Agnes 2.5 Flash'}</div>
         <div class="msg-bubble"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
       </div>
     `;
