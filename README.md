@@ -140,7 +140,7 @@
 
 ```powershell
 # 方式 A：手动启动各服务
-docker run -d --name mysql_rag -e MYSQL_ROOT_PASSWORD=Lm312405@ -p 3306:3306 -v mysql_data:/var/lib/mysql mysql:8.0
+docker run -d --name mysql_rag -e MYSQL_ROOT_PASSWORD=<your-mysql-password> -p 3306:3306 -v mysql_data:/var/lib/mysql mysql:8.0
 docker run -d --name redis_rag -p 6379:6379 redis:7-alpine
 docker run -d --name chroma_rag -p 8000:8000 -v chroma_data:/chroma/chroma chromadb/chroma
 ```
@@ -150,7 +150,7 @@ docker run -d --name chroma_rag -p 8000:8000 -v chroma_data:/chroma/chroma chrom
 连接 MySQL，执行建表脚本：
 
 ```bash
-mysql -u root -p'Lm312405@' lmretext < sql/sql/init.sql
+mysql -u root -p'<your-mysql-password>' lmretext < sql/sql/init.sql
 ```
 
 > 若已存在旧表，仅执行 ALTER 部分即可：
@@ -166,14 +166,14 @@ mysql -u root -p'Lm312405@' lmretext < sql/sql/init.sql
 在项目根目录创建 `.env` 文件（或直接修改 `application.yml`）：
 
 ```env
-DB_PASSWORD=Lm312405@
+DB_PASSWORD=<your-mysql-password>
 DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 AGNES_API_KEY=sk-your-agnes-key-here
 ```
 
 或在 IDEA 的 Run Configuration 中添加 JVM 参数：
 ```
--DDB_PASSWORD=Lm312405@
+-DDB_PASSWORD=<your-mysql-password>
 -DDEEPSEEK_API_KEY=sk-xxx
 -DAGNES_API_KEY=sk-xxx
 ```
