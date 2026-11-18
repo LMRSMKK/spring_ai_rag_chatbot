@@ -83,6 +83,7 @@ public class TextToSqlService {
                 .call()
                 .chatResponse()
                 .getResult()
-                .toString();
+                .getOutput()
+                .getText();
     }
 }

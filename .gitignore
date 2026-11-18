@@ -34,3 +34,5 @@ build/
 
 ### 敏感配置文件（本地开发用，不提交） ###
 src/main/resources/application.yml
+src/main/resources/application-docker.yml
+.env

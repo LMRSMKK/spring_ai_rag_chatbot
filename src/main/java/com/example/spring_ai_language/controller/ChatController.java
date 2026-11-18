@@ -65,18 +65,22 @@ public class ChatController {
             client = deepSeekClient;
         }
 
+        // 路由：启发式快筛命中 → 直接 SQL；否则调 LLM 二次判断，兜底走 RAG
         AskResult askResult;
         if (isLikelySqlQuestion(question)) {
-            // SQL 快路径：关键词命中 → 直接走 Text-to-SQL
-            String sqlAnswer = textToSqlService.anwserWithSql(question, userId, client);
-            askResult = new AskResult();
-            askResult.setAnswer(sqlAnswer);
-            askResult.setCostMs(0);
-            askResult.setRefCount(0);
-            askResult.setMode("sql");
+            askResult = doSqlAnswer(question, userId, client);
         } else {
-            // 默认走 RAG 管道（内部自己判断 relevance）
-            askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature);
+            try {
+                QuestionRouter.Route route = router.route(question);
+                if (route == QuestionRouter.Route.SQL) {
+                    askResult = doSqlAnswer(question, userId, client);
+                } else {
+                    askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature);
+                }
+            } catch (Exception e) {
+                log.warn("[路由失败] question={} err={}，降级走 RAG", question, e.getMessage());
+                askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature);
+            }
         }
 
         Map<String, Object> data = new java.util.HashMap<>();
@@ -90,7 +94,7 @@ public class ChatController {
         data.put("blocked",  askResult.isBlocked());
         if (askResult.getTokensIn()  != null) data.put("tokensIn",  askResult.getTokensIn());
         if (askResult.getTokensOut() != null) data.put("tokensOut", askResult.getTokensOut());
-        return Result.success(Map.of("code", 200, "message", "success", "data", data));
+        return Result.success(data);
     }
 
     //加载对话
@@ -145,23 +149,36 @@ public class ChatController {
         if (q == null || q.isBlank()) return false;
 
         // 条件A：有查询/统计意图
-        boolean hasQueryIntent = q.matches(".*[查查查找问问看看].*")
-                || q.contains("多少") || q.contains("统计")
-                || q.contains("总数") || q.contains("哪些")
-                || q.contains("排名") || q.contains("趋势");
+        boolean hasQueryIntent = q.matches(".*[查查找找问问看看].*")
+                || q.contains("多少") || q.contains("统计") || q.contains("总数")
+                || q.contains("哪些") || q.contains("排名") || q.contains("趋势")
+                || q.contains("最高") || q.contains("最低") || q.contains("平均")
+                || q.contains("占比") || q.contains("汇总") || q.contains("明细");
 
         // 条件B：常见业务名词（根据实际数据库表字段补充）
         boolean hasBizKeyword = q.contains("航班") || q.contains("机票")
                 || q.contains("员工") || q.contains("部门")
-                || q.contains("订单") || q.contains("销售额")
-                || q.contains("销售") || q.contains("库存")
-                || q.contains("工资") || q.contains("报销")
-                || q.contains("请假") || q.contains("考勤")
-                || q.contains("业绩") || q.contains("客户")
-                || q.contains("合同") || q.contains("项目")
+                || q.contains("订单") || q.contains("销售额") || q.contains("销售")
+                || q.contains("库存") || q.contains("工资") || q.contains("报销")
+                || q.contains("请假") || q.contains("考勤") || q.contains("业绩")
+                || q.contains("客户") || q.contains("合同") || q.contains("项目")
                 || q.contains("记录") || q.contains("数据")
-                || q.contains("人数") || q.contains("金额");
+                || q.contains("人数") || q.contains("金额")
+                || q.contains("分数") || q.contains("成绩") || q.contains("课程");
 
         return hasQueryIntent && hasBizKeyword;
+    }
+
+    /** 统一执行 Text-to-SQL，提取为私有方法供快筛和 LLM 路由共用 */
+    private AskResult doSqlAnswer(String question, String userId, ChatClient client) {
+        long startMs = System.currentTimeMillis();
+        String answer = textToSqlService.anwserWithSql(question, userId, client);
+        AskResult r = new AskResult();
+        r.setAnswer(answer);
+        r.setMode("sql");
+        r.setCostMs(System.currentTimeMillis() - startMs);
+        r.setRefCount(0);
+        log.debug("[路由] question={} → SQL（启发式命中）", question);
+        return r;
     }
 }

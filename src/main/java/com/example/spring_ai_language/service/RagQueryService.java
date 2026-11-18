@@ -143,8 +143,8 @@ public class RagQueryService {
                 return List.of();
             }
             redisTemplate.opsForValue().set(cacheKey,objectMapper.writeValueAsString(all),30, TimeUnit.MINUTES);
-            // 2. 超出阈值时触发压缩
-            if (all.size() > SUMMARIZE_THRESHOLD * 2) {
+            // 2. 超出阈值时触发压缩（含等于，确保刚好20条时也归档）
+            if (all.size() >= SUMMARIZE_THRESHOLD * 2) {
                 compressOldMessages(sessionId, all);
             }
             // 3. 截取最近 KEEP_RAW_COUNT 条返回
@@ -367,6 +367,12 @@ public class RagQueryService {
                                long costMs, Integer tokensIn, Integer tokensOut) {
         insertMsg(sessionId, userId, "user", question, costMs, tokensIn, null);
         insertMsg(sessionId, userId, "assistant", answer, costMs, null, tokensOut);
+        // 新消息写入后失效历史缓存，确保下次加载能看到最新条数并重新判断是否压缩
+        try {
+            redisTemplate.delete("session:history:" + sessionId);
+        } catch (Exception e) {
+            log.warn("[缓存失效失败] sessionId={}, err={}", sessionId, e.getMessage());
+        }
     }
 
     private void insertMsg(String sessionId, String userId, String role, String content,
