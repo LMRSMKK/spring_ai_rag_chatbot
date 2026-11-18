@@ -758,6 +758,13 @@
   });
 
   async function selectConv(el) {
+    // ⚠️ 切换会话前先中止当前正在进行的请求，防止响应串台
+    if (currentAbortController) {
+      currentAbortController.abort();
+      currentAbortController = null;
+    }
+    currentMessageId = null;
+
     document.querySelectorAll('.conv-item').forEach(i => i.classList.remove('active'));
     el.classList.add('active');
     const sid = el.dataset.sid;
@@ -798,12 +805,20 @@
   }
 
   async function createNewChat() {
+    // 先中止可能存在的旧请求
+    if (currentAbortController) {
+      currentAbortController.abort();
+      currentAbortController = null;
+    }
+    currentMessageId = null;
+
     try {
       const res = await fetch('/api/chat/new', { method: 'POST' });
       const data = await res.json();
       sessionId = data.data.sessionId;
       localStorage.setItem('current_session_id', sessionId);
     } catch(e) {}
+
     const container = document.getElementById('chatContainer');
     const welcome = document.getElementById('welcomeScreen');
     Array.from(container.children).forEach(child => {
@@ -812,9 +827,15 @@
     welcome.style.display = 'flex';
     document.getElementById('userInput').value = '';
     autoResize(document.getElementById('userInput'));
+    isProcessing = false;
+
+    // 刷新侧边栏，并高亮新建的会话
+    await loadSessions();
+    const newItem = document.querySelector('.conv-item[data-sid="' + sessionId + '"]');
+    if (newItem) newItem.classList.add('active');
+
     showToast('已创建新对话', 'success');
     if (window.innerWidth <= 768) toggleSidebar();
-    loadSessions();
   }
 
   function switchModel(model) {
@@ -878,6 +899,9 @@
     const cancelBtn = document.getElementById('cancelBtn');
     cancelBtn.style.display = 'grid';
 
+    // ⚠️ 记录发起请求时的会话快照，响应回来时验证是否仍是同一会话
+    const requestSessionId = sessionId;
+
     // 若有上一个请求在进行，先中止它（防御性保护）
     if (currentAbortController) {
       currentAbortController.abort();
@@ -919,6 +943,16 @@
       const data = await res.json();
       const tip = document.getElementById('typingIndicator');
       if (tip) tip.remove();
+
+      // ⚠️ 会话守卫：用户已切走，忽略此响应，防止答案串到别的对话
+      if (sessionId !== requestSessionId) {
+        console.log('[会话守卫] 请求期间会话已切换，丢弃响应');
+        isProcessing = false;
+        cancelBtn.style.display = 'none';
+        sendBtn.disabled = !document.getElementById('userInput').value.trim();
+        return;
+      }
+
       if (data.code !== 200) {
         addMessage('⚠️ ' + (data.message || '请求失败'), 'ai');
         isProcessing = false;
@@ -966,9 +1000,9 @@
     } catch (err) {
       const tip = document.getElementById('typingIndicator');
       if (tip) tip.remove();
-      // AbortError 是用户主动取消，静默处理不报错
+      // AbortError 是用户主动取消或会话切换导致的中止，静默处理不报错
       if (err.name === 'AbortError') {
-        console.log('[前端] 请求已被取消');
+        console.log('[前端] 请求已被中止');
         isProcessing = false;
         cancelBtn.style.display = 'none';
         sendBtn.disabled = !document.getElementById('userInput').value.trim();
