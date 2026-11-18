@@ -250,6 +250,13 @@
     }
     .send-btn:hover { background: var(--accent-light); transform: scale(1.05); }
     .send-btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+    .cancel-btn {
+      width: 36px; height: 36px; border-radius: var(--radius-md);
+      background: var(--red); color: #fff;
+      display: grid; place-items: center;
+      transition: all var(--transition); flex-shrink: 0;
+    }
+    .cancel-btn:hover { background: #dc2626; transform: scale(1.05); }
     .input-tools { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
     .tool-btn {
       padding: 4px 10px; border-radius: 20px;
@@ -522,6 +529,9 @@
           <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
           </button>
+          <button class="cancel-btn" id="cancelBtn" style="display:none" onclick="cancelCurrentRequest()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
         </div>
         <div class="input-tools">
           <button class="tool-btn" onclick="toggleUploadPanel()">
@@ -648,6 +658,8 @@
   let currentModel = localStorage.getItem('current_model') || 'deepseek'; // 'deepseek' | 'ollama' | 'agnes'
   let sessionId = localStorage.getItem("current_session_id") || generateId();
   let knowledgeBaseId = localStorage.getItem('current_knowledge_base_id') || 'default_kb';
+  let currentAbortController = null;   // 用于中止正在进行的 HTTP 请求
+  let currentMessageId = null;         // 保存服务端返回的 messageId，供取消时使用
 
   function generateId() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -862,6 +874,16 @@
     isProcessing = true;
     const sendBtn = document.getElementById('sendBtn');
     sendBtn.disabled = true;
+    // 显示取消按钮
+    const cancelBtn = document.getElementById('cancelBtn');
+    cancelBtn.style.display = 'grid';
+
+    // 若有上一个请求在进行，先中止它（防御性保护）
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+    currentAbortController = new AbortController();
+    const signal = currentAbortController.signal;
 
     // Show typing indicator
     const container = document.getElementById('chatContainer');
@@ -888,17 +910,39 @@
         topK: parseInt(document.getElementById("topkSelect").value),
         temp: parseFloat(document.getElementById("tempSelect").value)
       };
-      const data = await apiRequest('/api/chat/ask', payload);
+      const res = await fetch('/api/chat/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal
+      });
+      const data = await res.json();
       const tip = document.getElementById('typingIndicator');
       if (tip) tip.remove();
       if (data.code !== 200) {
         addMessage('⚠️ ' + (data.message || '请求失败'), 'ai');
-        isProcessing = false; sendBtn.disabled = !document.getElementById('userInput').value.trim(); return;
+        isProcessing = false;
+        cancelBtn.style.display = 'none';
+        sendBtn.disabled = !document.getElementById('userInput').value.trim();
+        return;
       }
       if (data.data?.blocked) {
         showToast('消息包含不当内容，已被截留', 'error');
         addMessage('您的消息包含不当内容，已屏蔽。', 'ai');
-        isProcessing = false; sendBtn.disabled = !document.getElementById('userInput').value.trim(); return;
+        isProcessing = false;
+        cancelBtn.style.display = 'none';
+        sendBtn.disabled = !document.getElementById('userInput').value.trim();
+        return;
+      }
+      // 保存服务端返回的 messageId，供取消时使用
+      currentMessageId = data.data?.messageId ?? null;
+      // 若本次请求被后端取消，不显示回答
+      if (data.data?.cancelled) {
+        showToast('已取消本次问答', 'info');
+        isProcessing = false;
+        cancelBtn.style.display = 'none';
+        sendBtn.disabled = !document.getElementById('userInput').value.trim();
+        return;
       }
       const costMs = data.data?.costMs ?? 0;
       const refCount = data.data?.refCount ?? 0;
@@ -909,7 +953,7 @@
       const tokensIn  = data.data?.tokensIn  ?? null;
       const tokensOut = data.data?.tokensOut ?? null;
       currentMode = mode;
-      // 更新顶部模型徽标（显示当前选中模型名，而非mode标签）
+      // 更新顶部模型徽标（显示当前选中模型名）
       const badge = document.querySelector('.model-badge');
       if (badge) {
         const modelName = currentModel === 'deepseek' ? 'DeepSeek V3' : currentModel === 'ollama' ? 'Ollama Qwen2.5' : 'Agnes 2.5 Flash';
@@ -917,10 +961,19 @@
       }
       addMessage(answer, 'ai', srcArr, null, costMs, refCount, mode, relevance, tokensIn, tokensOut);
       isProcessing = false;
+      cancelBtn.style.display = 'none';
       sendBtn.disabled = !document.getElementById('userInput').value.trim();
     } catch (err) {
       const tip = document.getElementById('typingIndicator');
       if (tip) tip.remove();
+      // AbortError 是用户主动取消，静默处理不报错
+      if (err.name === 'AbortError') {
+        console.log('[前端] 请求已被取消');
+        isProcessing = false;
+        cancelBtn.style.display = 'none';
+        sendBtn.disabled = !document.getElementById('userInput').value.trim();
+        return;
+      }
       console.error('[API Error]', err);
       let tipText = '⚠️ 服务调用失败：' + err.message;
       if (currentModel === 'ollama' && (err.message.includes('timeout') || err.message.includes('ECONNREFUSED'))) {
@@ -928,8 +981,37 @@
       }
       addMessage(tipText, 'ai');
       isProcessing = false;
+      cancelBtn.style.display = 'none';
       sendBtn.disabled = !document.getElementById('userInput').value.trim();
+    } finally {
+      currentAbortController = null;
     }
+  }
+
+  /** 用户主动取消当前正在进行的问答 */
+  async function cancelCurrentRequest() {
+    // 第1步：通知后端取消（必须 await，确保信号送达后再中止网络请求）
+    if (currentMessageId) {
+      try {
+        await fetch(`/api/chat/cancel/${currentMessageId}`, { method: 'DELETE' });
+      } catch (e) {
+        console.warn('取消通知发送失败，但前端仍会中止请求', e);
+      }
+    }
+    // 第2步：中止正在进行的 HTTP 请求
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+    // 第3步：清理事件状态
+    isProcessing = false;
+    const cancelBtn = document.getElementById('cancelBtn');
+    const sendBtn = document.getElementById('sendBtn');
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    if (sendBtn) sendBtn.disabled = !document.getElementById('userInput').value.trim();
+    const tip = document.getElementById('typingIndicator');
+    if (tip) tip.remove();
+    currentMessageId = null;
+    showToast('已取消本次问答', 'info');
   }
 
   function addMessage(text, role, sources, timeStr, costMs, refCount, mode, relevance, tokensIn, tokensOut) {

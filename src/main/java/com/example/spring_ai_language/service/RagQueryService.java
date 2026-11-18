@@ -13,13 +13,13 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.VectorStore;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,16 +33,11 @@ public class RagQueryService {
     // ────────────────────────────────────────────
     // 依赖注入
     // ────────────────────────────────────────────
-    @Autowired
-    private ChatClient client;
-    @Autowired
-    private ChatMessageMapper chatMessageMapper;
-    @Autowired
-    private VectorScoreService vectorScoreService;
-    @Autowired
-    private RedisTemplate<String,String>redisTemplate;
-    @Autowired
-    private ObjectMapper objectMapper;
+    @Autowired private ChatClient client;
+    @Autowired private ChatMessageMapper chatMessageMapper;
+    @Autowired private VectorScoreService vectorScoreService;
+    @Autowired private RedisTemplate<String, String> redisTemplate;
+    @Autowired private ObjectMapper objectMapper;
 
     // ────────────────────────────────────────────
     // 配置参数
@@ -64,50 +59,77 @@ public class RagQueryService {
 
     /**
      * RAG问答主入口：检索 → 评分 → 按置信度选策略 → 调用LLM → 落库
+     *
+     * @param requestCancelService 用于检查用户是否主动取消了本次请求
+     * @param messageId            本次请求的唯一标识，用于取消追踪
      */
     public AskResult ask(String userId, String sessionId,
-                         String question,  int topK, double temperature) {
+                         String question, int topK, double temperature,
+                         RequestCancelService requestCancelService, String messageId) {
+
+        // 【检查点 1】方法入口
+        if (requestCancelService.shouldCancel(messageId)) {
+            log.info("[RAG-取消] messageId={} 用户主动中断（入口）", messageId);
+            return buildCancelledResult();
+        }
+
         long startMs = System.currentTimeMillis();
 
         // ① 向量检索 + 相关性评分
         List<ScoredDocument> scoredDocs = vectorScoreService.scoredSearch(question, topK);
+
+        // 【检查点 2】向量检索完成后
+        if (requestCancelService.shouldCancel(messageId)) {
+            log.info("[RAG-取消] messageId={} 用户主动中断（向量检索后）", messageId);
+            return buildCancelledResult();
+        }
+
         double maxRelevance = scoredDocs.isEmpty() ? 0.0
                 : scoredDocs.stream().mapToDouble(ScoredDocument::getScore).max().orElse(0.0);
         List<String> sources = extractSources(scoredDocs);
 
-        AskResult result = new AskResult();
-        result.setRelevance(maxRelevance);
-        result.setSources(sources);
+        AskResult result = AskResult.builder()
+                .relevance(maxRelevance)
+                .sources(sources)
+                .build();
 
         // ② 按相关性选择回答策略，调用LLM
         String answer;
         LlmResult llmResult;
         if (maxRelevance >= HIGH_THRESHOLD) {
-            // 高置信度 → 严格RAG模式，只准用资料答
             List<Document> docs = scoredDocs.stream()
                     .filter(sd -> sd.getScore() >= HIGH_THRESHOLD)
                     .map(ScoredDocument::getDocument)
                     .collect(Collectors.toList());
-            llmResult = askWithLlm(history(sessionId), question, buildStrictPrompt(buildContext(docs)), temperature);
+            llmResult = askWithLlm(history(sessionId), question,
+                    buildStrictPrompt(buildContext(docs)), temperature,
+                    requestCancelService, messageId);
             answer = llmResult.text;
             result.setMode("rag");
             result.setRefCount(docs.size());
         } else if (maxRelevance >= MED_THRESHOLD) {
-            // 中置信度 → 混合模式，资料+通用知识结合
             List<Document> docs = scoredDocs.stream()
                     .filter(sd -> sd.getScore() >= MED_THRESHOLD)
                     .map(ScoredDocument::getDocument)
                     .collect(Collectors.toList());
-            llmResult = askWithLlm(history(sessionId), question, buildMixedPrompt(buildContext(docs)), temperature);
+            llmResult = askWithLlm(history(sessionId), question,
+                    buildMixedPrompt(buildContext(docs)), temperature,
+                    requestCancelService, messageId);
             answer = llmResult.text;
             result.setMode("rag_with_knowledge");
             result.setRefCount(docs.size());
         } else {
-            // 低/无相关 → 开放模式，模型自由发挥
-            llmResult = askOpenMode(history(sessionId), question, temperature);
+            llmResult = askOpenMode(history(sessionId), question, temperature,
+                    requestCancelService, messageId);
             answer = llmResult.text;
             result.setMode("knowledge");
             result.setRefCount(0);
+        }
+
+        // 【检查点 3】LLM 调用完成后、落库前
+        if (requestCancelService.shouldCancel(messageId)) {
+            log.info("[RAG-取消] messageId={} 用户主动中断（LLM返回后）", messageId);
+            return buildCancelledResult();
         }
 
         // ③ 写入DB并返回
@@ -115,39 +137,42 @@ public class RagQueryService {
         result.setCostMs(System.currentTimeMillis() - startMs);
         result.setTokensIn(llmResult.tokensIn);
         result.setTokensOut(llmResult.tokensOut);
-        saveAndReturn(sessionId, userId, question, answer, result.getCostMs(), llmResult.tokensIn, llmResult.tokensOut);
+        saveAndReturn(sessionId, userId, question, answer, result.getCostMs(),
+                llmResult.tokensIn, llmResult.tokensOut);
         log.debug("[问答] user={} mode={} relevance={} refs={}",
                 userId, result.getMode(), String.format("%.2f", maxRelevance), result.getRefCount());
         return result;
+    }
+
+    /** 构造被取消时的 AskResult */
+    private AskResult buildCancelledResult() {
+        return AskResult.builder()
+                .cancelled(true)
+                .answer("")
+                .mode("cancelled")
+                .costMs(0)
+                .build();
     }
 
     // ════════════════════════════════════════════
     // 历史记忆管理（含按需摘要压缩）
     // ════════════════════════════════════════════
 
-    /**
-     * 获取会话历史消息列表（已做按需压缩）。
-     * 返回顺序为时间正序（老→新），供LLM正确理解对话上下文。
-     */
-
     private List<ChatMessage> history(String sessionId) {
         try {
             String cacheKey = "session:history:" + sessionId;
-            String json=redisTemplate.opsForValue().get(cacheKey);
-            if(json!=null){
-                return objectMapper.readValue(json, new TypeReference<List<ChatMessage>>(){});
+            String json = redisTemplate.opsForValue().get(cacheKey);
+            if (json != null) {
+                return objectMapper.readValue(json, new TypeReference<List<ChatMessage>>() {});
             }
-            // 1. 全量拉取（上限9999，保证不截断）
             List<ChatMessage> all = chatMessageMapper.selectAllBySession(sessionId, 9999);
             if (all == null || all.isEmpty()) {
                 return List.of();
             }
-            redisTemplate.opsForValue().set(cacheKey,objectMapper.writeValueAsString(all),30, TimeUnit.MINUTES);
-            // 2. 超出阈值时触发压缩（含等于，确保刚好20条时也归档）
+            redisTemplate.opsForValue().set(cacheKey, objectMapper.writeValueAsString(all), 30, TimeUnit.MINUTES);
             if (all.size() >= SUMMARIZE_THRESHOLD * 2) {
                 compressOldMessages(sessionId, all);
             }
-            // 3. 截取最近 KEEP_RAW_COUNT 条返回
             int fromIndex = Math.max(0, all.size() - KEEP_RAW_COUNT);
             return new ArrayList<>(all.subList(fromIndex, all.size()));
         } catch (Exception e) {
@@ -156,20 +181,12 @@ public class RagQueryService {
         }
     }
 
-    /**
-     * 将较早的历史消息替换为一段自然语言摘要。
-     * 流程：拆分旧消息 → 调LLM生成摘要 → 以 role=summary 插入DB → 后续读取时自动转为SystemMessage
-     */
     private void compressOldMessages(String sessionId, List<ChatMessage> all) {
         int keepFromIndex = Math.max(0, all.size() - KEEP_RAW_COUNT);
         List<ChatMessage> oldMessages = all.subList(0, keepFromIndex);
-        if (oldMessages.isEmpty()) {
-            return;
-        }
+        if (oldMessages.isEmpty()) return;
         String chatContent = formatForSummary(oldMessages);
-        if (chatContent.isBlank()) {
-            return;
-        }
+        if (chatContent.isBlank()) return;
         String summary = generateSummary(chatContent);
         if (summary == null) {
             log.warn("[摘要生成失败] sessionId={}, 跳过压缩", sessionId);
@@ -179,7 +196,6 @@ public class RagQueryService {
         log.info("[记忆压缩] sessionId={} 旧消息{}条→已归档为摘要", sessionId, oldMessages.size());
     }
 
-    /** 将旧消息拼接为"用户：xxx / 助手：xxx"格式，供摘要LLM使用 */
     private String formatForSummary(List<ChatMessage> messages) {
         StringBuilder sb = new StringBuilder();
         for (ChatMessage m : messages) {
@@ -189,7 +205,6 @@ public class RagQueryService {
         return sb.toString().trim();
     }
 
-    /** 调LLM把对话历史总结为一段不超过150字的概述 */
     private String generateSummary(String chatContent) {
         try {
             List<Message> msgs = new ArrayList<>();
@@ -206,7 +221,6 @@ public class RagQueryService {
         }
     }
 
-    /** 将摘要记录插入DB，role设为"summary"，addRoleMessage会将其转为SystemMessage */
     private void insertSummaryRecord(String sessionId, String summary) {
         try {
             ChatMessage summaryMsg = new ChatMessage();
@@ -222,28 +236,32 @@ public class RagQueryService {
     }
 
     // ════════════════════════════════════════════
-    // LLM调用封装
+    // LLM调用封装（含取消检查）
     // ════════════════════════════════════════════
 
     /** 带系统提示的通用LLM调用，返回文本+token用量 */
-    private LlmResult askWithLlm(List<ChatMessage> history, String question, Message systemMsg, double temp) {
+    private LlmResult askWithLlm(List<ChatMessage> history, String question,
+                                   Message systemMsg, double temp,
+                                   RequestCancelService rcs, String messageId) {
+        if (rcs.shouldCancel(messageId)) return new LlmResult("", null, null);
         List<Message> messages = buildMessages(history, question, systemMsg);
-        return callLlm(client, messages, temp);
+        return callLlm(client, messages, temp, rcs, messageId);
     }
 
     /** 开放模式调用：无参考资料约束，仅保留历史记录+当前问题 */
-    private LlmResult askOpenMode(List<ChatMessage> history, String question, double temp) {
+    private LlmResult askOpenMode(List<ChatMessage> history, String question, double temp,
+                                   RequestCancelService rcs, String messageId) {
+        if (rcs.shouldCancel(messageId)) return new LlmResult("", null, null);
         List<Message> messages = new ArrayList<>();
         messages.add(buildOpenPrompt());
         history.forEach(m -> addRoleMessage(messages, m));
         messages.add(new UserMessage(question));
-        return callLlm(client, messages, temp);
+        return callLlm(client, messages, temp, rcs, messageId);
     }
 
-    /** 统一LLM调用入口，同时提取prompt/completion token数量。
-     * - DeepSeek / Agnes（OpenAI兼容）：从标准 Usage 接口直接读取
-     * - Ollama：Spring AI 1.0.3 不映射 token 字段，改用文本长度估算 */
-    private LlmResult callLlm(ChatClient cli, List<Message> messages, double temp) {
+    /** 统一LLM调用入口，同时提取prompt/completion token数量。 */
+    private LlmResult callLlm(ChatClient cli, List<Message> messages, double temp,
+                               RequestCancelService rcs, String messageId) {
         try {
             ChatClientResponse resp = cli.prompt()
                     .messages(messages)
@@ -251,38 +269,30 @@ public class RagQueryService {
                     .call().chatClientResponse();
             var chatResp = resp.chatResponse();
             var usage = chatResp.getMetadata().getUsage();
+
             Integer promptTokens  = null;
             Integer completionTok = null;
             if (usage != null && usage.getPromptTokens() != null) {
-                // OpenAI / DeepSeek / Agnes：标准 Usage 接口直接可读
                 promptTokens  = usage.getPromptTokens();
                 completionTok = usage.getCompletionTokens();
             } else {
-                // Ollama 未提供 Usage → 基于文本长度估算（每4字符≈1英文token，每1字符≈1中文token）
                 String inputText = messages.stream()
                         .filter(m -> m instanceof UserMessage || m instanceof SystemMessage)
                         .map(m -> m instanceof UserMessage ? ((UserMessage) m).getText()
-                             : ((SystemMessage) m).getText())
+                                 : ((SystemMessage) m).getText())
                         .collect(Collectors.joining("\n"));
                 String outputText = chatResp.getResult().getOutput().getText();
                 promptTokens  = estimateTokens(inputText);
                 completionTok = estimateTokens(outputText);
-                log.debug("[Token估算] prompt={} completion={} (Ollama fallback)", promptTokens, completionTok);
+                log.debug("[Token估算] prompt={} completion={} (fallback)", promptTokens, completionTok);
             }
-            return new LlmResult(
-                    chatResp.getResult().getOutput().getText(),
-                    promptTokens, completionTok
-            );
+            return new LlmResult(chatResp.getResult().getOutput().getText(), promptTokens, completionTok);
         } catch (Exception e) {
             log.error("[LLM调用失败]: {}", e.getMessage());
             return new LlmResult("服务暂时不可用，请稍后再试。", null, null);
         }
     }
 
-    /**
-     * 根据文本内容估算 token 数量。
-     * 中文字符每个约计为 1 token，英文字母每 4 个约计为 1 token，数字和标点按 1 字符 = 1 token 计算。
-     */
     private int estimateTokens(String text) {
         if (text == null || text.isBlank()) return 0;
         long cn = 0, en = 0, other = 0;
@@ -291,7 +301,6 @@ public class RagQueryService {
             else if (Character.isLetter(c)) en++;
             else other++;
         }
-        // 中文1字≈1token，英文4字母≈1token，数字/标点≈1token
         return (int) Math.ceil(cn + (double) en / 4 + other);
     }
 
@@ -299,7 +308,6 @@ public class RagQueryService {
     // 消息构建辅助
     // ════════════════════════════════════════════
 
-    /** 将DB中的ChatMessage列表转为LLM能理解的Message列表（按时间正序追加） */
     private List<Message> buildMessages(List<ChatMessage> history, String question, Message systemMsg) {
         List<Message> msgs = new ArrayList<>();
         msgs.add(systemMsg);
@@ -308,7 +316,6 @@ public class RagQueryService {
         return msgs;
     }
 
-    /** 根据role字段将ChatMessage映射为对应的Message子类；summary角色转为SystemMessage */
     private void addRoleMessage(List<Message> messages, ChatMessage m) {
         if ("summary".equals(m.getRole())) {
             messages.add(new SystemMessage(m.getContent()));
@@ -323,7 +330,6 @@ public class RagQueryService {
     // Prompt模板
     // ════════════════════════════════════════════
 
-    /** 严格RAG模式：只允许引用资料作答 */
     private Message buildStrictPrompt(String context) {
         String base = """
                 你是企业知识库问答助手，必须严格遵守以下规则：
@@ -338,7 +344,6 @@ public class RagQueryService {
                 : new SystemMessage(base + "\n\n【参考资料】\n（暂无相关资料）");
     }
 
-    /** 混合模式：优先用资料，不足时可补充通用知识 */
     private Message buildMixedPrompt(String context) {
         String base = """
                 你是企业知识库问答助手。以下【参考资料】可作为参考，也可以结合自己的知识回答。
@@ -351,23 +356,20 @@ public class RagQueryService {
                 : new SystemMessage(base);
     }
 
-    /** 开放模式：无约束，自由回答 */
     private Message buildOpenPrompt() {
         return new SystemMessage(
                 "你是一个有用的 AI 助手。请用简洁清晰的方式回答用户的问题。\n" +
-                        "无需引用任何特定资料，自由发挥即可。");
+                "无需引用任何特定资料，自由发挥即可。");
     }
 
     // ════════════════════════════════════════════
     // 数据入库 & 工具方法
     // ════════════════════════════════════════════
 
-    /** 保存本轮对话（user提问 + assistant回答）到chat_message表，含token统计 */
     private void saveAndReturn(String sessionId, String userId, String question, String answer,
-                               long costMs, Integer tokensIn, Integer tokensOut) {
+                                long costMs, Integer tokensIn, Integer tokensOut) {
         insertMsg(sessionId, userId, "user", question, costMs, tokensIn, null);
         insertMsg(sessionId, userId, "assistant", answer, costMs, null, tokensOut);
-        // 新消息写入后失效历史缓存，确保下次加载能看到最新条数并重新判断是否压缩
         try {
             redisTemplate.delete("session:history:" + sessionId);
         } catch (Exception e) {
@@ -388,7 +390,6 @@ public class RagQueryService {
         chatMessageMapper.insert(msg);
     }
 
-    /** 从检索结果中提取去重后的文件名列表 */
     private List<String> extractSources(List<ScoredDocument> scoredDocs) {
         return scoredDocs.stream()
                 .map(sd -> (String) sd.getDocument().getMetadata().getOrDefault("file_name", "未知文件"))
@@ -396,14 +397,10 @@ public class RagQueryService {
                 .collect(Collectors.toList());
     }
 
-    /** 将多个Document的文本拼接成带分隔符的上下文字符串 */
     private String buildContext(List<Document> docs) {
         return docs.stream().map(Document::getText).collect(Collectors.joining("\n---\n"));
     }
 
-    // ─────────────────────────────────────
-    // 内部值对象：封装LLM响应文本与token用量
-    // ─────────────────────────────────────
     private static class LlmResult {
         final String text;
         final Integer tokensIn;
