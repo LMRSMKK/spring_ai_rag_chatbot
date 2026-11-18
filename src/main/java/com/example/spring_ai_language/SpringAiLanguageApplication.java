@@ -8,6 +8,7 @@ import org.springframework.cache.annotation.EnableCaching;
 @SpringBootApplication
 @MapperScan("com.example.spring_ai_language.mapper")
 @EnableCaching
+
 public class SpringAiLanguageApplication {
 
     public static void main(String[] args) {
