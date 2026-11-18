@@ -1,36 +1,46 @@
 package com.example.spring_ai_language.service;
 
+import com.example.spring_ai_language.entity.ChatMessage;
+import com.example.spring_ai_language.mapper.ChatMessageMapper;
 import com.example.spring_ai_language.tools.SqlTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Slf4j
 @Service
 public class TextToSqlService {
     @Autowired private ChatClient client;
     @Autowired private SqlTool sqlTool;
+    @Autowired private ChatMessageMapper chatMessageMapper;
 
     /**
      * 执行 Text-to-SQL 问答
      *
-     * @param question           用户自然语言问题
-     * @param userId             用户ID（用于权限审计）
-     * @param sessionId          会话ID（用于查询历史记录）
-     * @param client             当前选用的 LLM ChatClient
+     * @param question             用户自然语言问题
+     * @param userId               用户ID
+     * @param sessionId            会话ID
+     * @param client               当前选用的 LLM ChatClient
      * @param requestCancelService 用于检查是否被用户取消
-     * @param messageId          本次请求的唯一标识
+     * @param messageId            本次请求的唯一标识（同时作为 askId 关联 DB 记录）
+     * @param model                使用的模型名称，用于落库
      * @return 最终自然语言回答；若被取消则返回空字符串
      */
     public String anwserWithSql(String question, String userId, String sessionId,
-                                 ChatClient client, RequestCancelService requestCancelService, String messageId) {
+                                 ChatClient client, RequestCancelService requestCancelService,
+                                 String messageId, String model) {
 
-        // 【检查点 1】方法入口
+        // 【检查点 1】方法入口：先标记取消，再插入 pending 用户消息
         if (requestCancelService.shouldCancel(messageId)) {
             log.info("[TextToSql-取消] messageId={} 用户主动中断（入口）", messageId);
             return "";
         }
+
+        // 预先插入 user 消息为 pending
+        insertPendingUser(sessionId, userId, question, messageId);
 
         // ①获取数据库表结构（作为Schema上下文发给LLM）
         String schema = sqlTool.getSchema();
@@ -68,6 +78,7 @@ public class TextToSqlService {
             // 【检查点 2】LLM调用前
             if (requestCancelService.shouldCancel(messageId)) {
                 log.info("[TextToSql-取消] messageId={} 用户主动中断（SQL生成前）", messageId);
+                markCancelled(messageId);
                 return "";
             }
             String raw = client.prompt()
@@ -97,6 +108,7 @@ public class TextToSqlService {
             // 【检查点 3】SQL执行前
             if (requestCancelService.shouldCancel(messageId)) {
                 log.info("[TextToSql-取消] messageId={} 用户主动中断（SQL执行前）", messageId);
+                markCancelled(messageId);
                 return "";
             }
             queryResult = sqlTool.executeQuery(sql);
@@ -120,18 +132,78 @@ public class TextToSqlService {
             // 【检查点 4】结果整理前
             if (requestCancelService.shouldCancel(messageId)) {
                 log.info("[TextToSql-取消] messageId={} 用户主动中断（结果整理前）", messageId);
+                markCancelled(messageId);
                 return "";
             }
-            return client.prompt()
+            String answer = client.prompt()
                     .user(formatPrompt)
                     .call()
                     .chatResponse()
                     .getResult()
                     .getOutput()
                     .getText();
+            // 成功：更新 user 行为 answered，插入 assistant 行
+            saveAnswered(sessionId, userId, messageId, answer, model);
+            return answer;
         } catch (Exception e) {
             log.error("[TextToSql] 结果整理失败: {}", e.getMessage());
             return "查询完成但结果整理时出错，请稍后重试。";
+        }
+    }
+
+    /** 在请求开始时插入一条 pending 状态的 user 消息 */
+    private void insertPendingUser(String sessionId, String userId, String question, String messageId) {
+        try {
+            ChatMessage msg = new ChatMessage();
+            msg.setSessionId(sessionId);
+            msg.setUserId(userId);
+            msg.setRole("user");
+            msg.setContent(question);
+            msg.setAskId(messageId);
+            msg.setStatus("pending");
+            msg.setCostMs(0);
+            chatMessageMapper.insert(msg);
+        } catch (Exception e) {
+            log.warn("[插入pending用户消息失败] sessionId={} err={}", sessionId, e.getMessage());
+        }
+    }
+
+    /** 将 pending 记录标记为 cancelled */
+    private void markCancelled(String messageId) {
+        try {
+            chatMessageMapper.markCancelledByAskId(messageId);
+            log.info("[TextToSql-DB清理] messageId={} 已标记为 cancelled", messageId);
+        } catch (Exception e) {
+            log.warn("[TextToSql-DB清理失败] messageId={} err={}", messageId, e.getMessage());
+        }
+    }
+
+    /** 用户消息完成时：更新 user 行状态，插入 assistant 行 */
+    private void saveAnswered(String sessionId, String userId, String messageId, String answer, String modelName) {
+        try {
+            List<ChatMessage> records = chatMessageMapper.selectByAskId(messageId);
+            Long userMsgId = null;
+            for (ChatMessage m : records) {
+                if ("user".equals(m.getRole()) && "pending".equals(m.getStatus())) {
+                    userMsgId = m.getId();
+                    break;
+                }
+            }
+            if (userMsgId != null) {
+                chatMessageMapper.updateContentAndStatus(userMsgId, answer, "answered");
+            }
+            // 插入 assistant 回答
+            ChatMessage assistantMsg = new ChatMessage();
+            assistantMsg.setSessionId(sessionId);
+            assistantMsg.setUserId(userId);
+            assistantMsg.setRole("assistant");
+            assistantMsg.setContent(answer);
+            assistantMsg.setModel(modelName);
+            assistantMsg.setAskId(messageId);
+            assistantMsg.setStatus("answered");
+            chatMessageMapper.insert(assistantMsg);
+        } catch (Exception e) {
+            log.error("[TextToSql-写入结果失败] messageId={}", messageId, e);
         }
     }
 }

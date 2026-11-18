@@ -65,23 +65,26 @@ public class RagQueryService {
      */
     public AskResult ask(String userId, String sessionId,
                          String question, int topK, double temperature,
-                         RequestCancelService requestCancelService, String messageId) {
+                         RequestCancelService requestCancelService, String messageId, String model) {
 
         // 【检查点 1】方法入口
         if (requestCancelService.shouldCancel(messageId)) {
             log.info("[RAG-取消] messageId={} 用户主动中断（入口）", messageId);
-            return buildCancelledResult();
+            return buildCancelledResult(requestCancelService, messageId);
         }
 
         long startMs = System.currentTimeMillis();
 
-        // ① 向量检索 + 相关性评分
+        // ① 预先插入 user 消息为 pending，让前端能立即看到并持久化
+        insertPendingUser(sessionId, userId, question, messageId);
+
+        // ② 向量检索 + 相关性评分
         List<ScoredDocument> scoredDocs = vectorScoreService.scoredSearch(question, topK);
 
         // 【检查点 2】向量检索完成后
         if (requestCancelService.shouldCancel(messageId)) {
             log.info("[RAG-取消] messageId={} 用户主动中断（向量检索后）", messageId);
-            return buildCancelledResult();
+            return buildCancelledResult(requestCancelService, messageId);
         }
 
         double maxRelevance = scoredDocs.isEmpty() ? 0.0
@@ -93,7 +96,7 @@ public class RagQueryService {
                 .sources(sources)
                 .build();
 
-        // ② 按相关性选择回答策略，调用LLM
+        // ③ 按相关性选择回答策略，调用LLM
         String answer;
         LlmResult llmResult;
         if (maxRelevance >= HIGH_THRESHOLD) {
@@ -129,29 +132,96 @@ public class RagQueryService {
         // 【检查点 3】LLM 调用完成后、落库前
         if (requestCancelService.shouldCancel(messageId)) {
             log.info("[RAG-取消] messageId={} 用户主动中断（LLM返回后）", messageId);
-            return buildCancelledResult();
+            return buildCancelledResult(requestCancelService, messageId);
         }
 
-        // ③ 写入DB并返回
+        // ④ 更新 user 行状态为 answered，插入 assistant 行
         result.setAnswer(answer);
         result.setCostMs(System.currentTimeMillis() - startMs);
         result.setTokensIn(llmResult.tokensIn);
         result.setTokensOut(llmResult.tokensOut);
-        saveAndReturn(sessionId, userId, question, answer, result.getCostMs(),
-                llmResult.tokensIn, llmResult.tokensOut);
+        saveAnswered(sessionId, userId, messageId, answer, result.getCostMs(),
+                model, llmResult.tokensIn, llmResult.tokensOut);
         log.debug("[问答] user={} mode={} relevance={} refs={}",
                 userId, result.getMode(), String.format("%.2f", maxRelevance), result.getRefCount());
         return result;
     }
 
-    /** 构造被取消时的 AskResult */
-    private AskResult buildCancelledResult() {
+    /** 构造被取消时的 AskResult，同时更新 DB 中对应记录为 cancelled */
+    private AskResult buildCancelledResult(RequestCancelService rcs, String messageId) {
+        try {
+            chatMessageMapper.markCancelledByAskId(messageId);
+            log.info("[RAG-DB清理] messageId={} 已标记为 cancelled", messageId);
+        } catch (Exception e) {
+            log.warn("[RAG-DB清理失败] messageId={} err={}", messageId, e.getMessage());
+        }
         return AskResult.builder()
                 .cancelled(true)
                 .answer("")
                 .mode("cancelled")
                 .costMs(0)
                 .build();
+    }
+
+    /** 在请求开始时插入一条 pending 状态的 user 消息，askId=messageId 用于后续关联 */
+    private void insertPendingUser(String sessionId, String userId, String question, String messageId) {
+        try {
+            ChatMessage msg = new ChatMessage();
+            msg.setSessionId(sessionId);
+            msg.setUserId(userId);
+            msg.setRole("user");
+            msg.setContent(question);
+            msg.setAskId(messageId);
+            msg.setStatus("pending");
+            msg.setCostMs(0);
+            chatMessageMapper.insert(msg);
+        } catch (Exception e) {
+            log.warn("[插入pending用户消息失败] sessionId={} err={}", sessionId, e.getMessage());
+        }
+    }
+
+    /** 用户消息完成时：更新 user 行状态为 answered，并插入 assistant 行 */
+    private void saveAnswered(String sessionId, String userId, String messageId, String answer,
+                               long costMs, String modelName, Integer tokensIn, Integer tokensOut) {
+        try {
+            // 查找 pending 的 user 记录并更新元数据
+            List<ChatMessage> records = chatMessageMapper.selectByAskId(messageId);
+            Long userMsgId = null;
+            for (ChatMessage m : records) {
+                if ("user".equals(m.getRole()) && "pending".equals(m.getStatus())) {
+                    userMsgId = m.getId();
+                    break;
+                }
+            }
+            if (userMsgId != null) {
+                chatMessageMapper.updateUserMeta(userMsgId, modelName, tokensIn, tokensOut, (int) costMs);
+            }
+            // 插入 assistant 回答
+            insertAssistantMsg(sessionId, userId, messageId, answer, costMs, tokensOut, modelName);
+            // 失效历史缓存
+            try {
+                redisTemplate.delete("session:history:" + sessionId);
+            } catch (Exception e) {
+                log.warn("[缓存失效失败] sessionId={}, err={}", sessionId, e.getMessage());
+            }
+        } catch (Exception e) {
+            log.error("[写入问答结果失败] messageId={}", messageId, e);
+        }
+    }
+
+    private void insertAssistantMsg(String sessionId, String userId, String messageId, String content,
+                                     long costMs, Integer tokensOut, String model) {
+        ChatMessage msg = new ChatMessage();
+        msg.setSessionId(sessionId);
+        msg.setUserId(userId);
+        msg.setRole("assistant");
+        msg.setContent(content);
+        msg.setModel(model);
+        msg.setAskId(messageId);
+        msg.setStatus("answered");
+        msg.setCostMs((int) costMs);
+        msg.setTokensOut(tokensOut);
+        chatMessageMapper.insert(msg);
     }
 
     // ════════════════════════════════════════════
@@ -365,30 +435,6 @@ public class RagQueryService {
     // ════════════════════════════════════════════
     // 数据入库 & 工具方法
     // ════════════════════════════════════════════
-
-    private void saveAndReturn(String sessionId, String userId, String question, String answer,
-                                long costMs, Integer tokensIn, Integer tokensOut) {
-        insertMsg(sessionId, userId, "user", question, costMs, tokensIn, null);
-        insertMsg(sessionId, userId, "assistant", answer, costMs, null, tokensOut);
-        try {
-            redisTemplate.delete("session:history:" + sessionId);
-        } catch (Exception e) {
-            log.warn("[缓存失效失败] sessionId={}, err={}", sessionId, e.getMessage());
-        }
-    }
-
-    private void insertMsg(String sessionId, String userId, String role, String content,
-                           long costMs, Integer tokensIn, Integer tokensOut) {
-        ChatMessage msg = new ChatMessage();
-        msg.setSessionId(sessionId);
-        msg.setUserId(userId);
-        msg.setRole(role);
-        msg.setContent(content);
-        msg.setCostMs((int) costMs);
-        msg.setTokensIn(tokensIn);
-        msg.setTokensOut(tokensOut);
-        chatMessageMapper.insert(msg);
-    }
 
     private List<String> extractSources(List<ScoredDocument> scoredDocs) {
         return scoredDocs.stream()

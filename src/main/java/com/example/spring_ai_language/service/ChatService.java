@@ -94,6 +94,8 @@ public class ChatService {
             map.put("content", m.getContent());
             map.put("time", m.getCreateTime() != null ? m.getCreateTime().toString() : "");
             map.put("costMs", m.getCostMs());
+            map.put("askId", m.getAskId());
+            map.put("status", m.getStatus() != null ? m.getStatus() : "answered");
             return map;
         }).collect(Collectors.toList());
     }

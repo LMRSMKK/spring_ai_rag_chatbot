@@ -758,7 +758,7 @@
   });
 
   async function selectConv(el) {
-    // ⚠️ 切换会话前先中止当前正在进行的请求，防止响应串台
+    // ⚠️ 切换会话前先中止当前请求，防止响应串台
     if (currentAbortController) {
       currentAbortController.abort();
       currentAbortController = null;
@@ -779,10 +779,19 @@
           const welcome = document.getElementById('welcomeScreen');
           if (welcome) welcome.style.display = 'none';
           const container = document.getElementById('chatContainer');
+          // 只清除非欢迎屏元素，但保留带有 status=pending 的 AI loading 气泡
           Array.from(container.children).forEach(c => {
             if (!['welcomeScreen','exampleMsg'].includes(c.id)) c.remove();
           });
-          for (const m of data.data) { const ts=m.time?((typeof m.time==='string'&&m.time.includes('T'))?m.time.substring(11,16):m.time):null; addMessage(m.content,m.role,null,ts,m.costMs,null,null,null,null,null); }
+          for (const m of data.data) {
+            const ts = m.time ? ((typeof m.time === 'string' && m.time.includes('T')) ? m.time.substring(11, 16) : m.time) : null;
+            // 如果这条用户消息是 pending 状态，渲染为带 loading 的气泡而非普通消息
+            if (m.status === 'pending' && m.role === 'user') {
+              renderPendingBubble(container, m.content, ts, m.askId);
+            } else {
+              addMessage(m.content, m.role, null, ts, m.costMs, null, null, null, null, null);
+            }
+          }
           scrollToBottom();
         }
       } catch(e) {}
@@ -790,6 +799,23 @@
       document.querySelector('.topbar-title').textContent = el.querySelector('.title').textContent;
     }
     if (window.innerWidth <= 768) toggleSidebar();
+  }
+
+  /** 渲染一个 pending 状态的用户消息气泡（带永久 loading 指示器，直到后端完成或取消） */
+  function renderPendingBubble(container, text, timeStr, askId) {
+    const div = document.createElement('div');
+    div.className = 'message';
+    div.dataset.askId = askId || '';
+    const now = timeStr || (new Date().getHours().toString().padStart(2,'0') + ':' + new Date().getMinutes().toString().padStart(2,'0'));
+    div.innerHTML = `
+      <div class="msg-avatar user">我</div>
+      <div class="msg-body">
+        <div class="msg-role">你 · ${now}</div>
+        <div class="msg-bubble user-bubble">${escHtml(text)}</div>
+        <div class="msg-meta"><span>⏳ 等待回答中...</span></div>
+      </div>
+    `;
+    container.appendChild(div);
   }
 
   async function deleteConv(btn) {
@@ -970,9 +996,15 @@
       }
       // 保存服务端返回的 messageId，供取消时使用
       currentMessageId = data.data?.messageId ?? null;
-      // 若本次请求被后端取消，不显示回答
+      // 若本次请求被后端取消，不显示回答；同时更新 pending 气泡状态
       if (data.data?.cancelled) {
         showToast('已取消本次问答', 'info');
+        // 找到对应的 pending 气泡，把 "等待回答中..." 改为 "已取消"
+        const askId = data.data?.messageId;
+        if (askId) {
+          const pendingBubble = document.querySelector(`.message[data-ask-id="${askId}"] .msg-meta span`);
+          if (pendingBubble) pendingBubble.textContent = '❌ 已取消';
+        }
         isProcessing = false;
         cancelBtn.style.display = 'none';
         sendBtn.disabled = !document.getElementById('userInput').value.trim();
@@ -1439,7 +1471,16 @@
         const data = await res.json();
         if (data.code === 200 && data.data && data.data.length > 0) {
           document.getElementById('welcomeScreen').style.display = 'none';
-          for (const m of data.data) addMessage(m.content, m.role, null, m.time, m.costMs, null, null, null, null, null);
+          const container = document.getElementById('chatContainer');
+          for (const m of data.data) {
+            const ts = m.time ? ((typeof m.time === 'string' && m.time.includes('T')) ? m.time.substring(11, 16) : m.time) : null;
+            // 如果用户消息仍处于 pending 状态，渲染为带 loading 的气泡而非普通消息
+            if (m.status === 'pending' && m.role === 'user') {
+              renderPendingBubble(container, m.content, ts, m.askId);
+            } else {
+              addMessage(m.content, m.role, null, ts, m.costMs, null, null, null, null, null);
+            }
+          }
           scrollToBottom();
         }
       } catch(e) {}

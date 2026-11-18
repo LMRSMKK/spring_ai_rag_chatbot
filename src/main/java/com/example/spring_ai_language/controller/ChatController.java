@@ -59,18 +59,18 @@ public class ChatController {
 
             // 路由：启发式快筛命中 → 直接 SQL；否则调 LLM 二次判断，兜底走 RAG
             if (isLikelySqlQuestion(question)) {
-                askResult = doSqlAnswer(question, userId, sessionId, client, messageId);
+                askResult = doSqlAnswer(question, userId, sessionId, client, model, messageId);
             } else {
                 try {
                     QuestionRouter.Route route = router.route(question, requestCancelService, messageId);
                     if (route == QuestionRouter.Route.SQL) {
-                        askResult = doSqlAnswer(question, userId, sessionId, client, messageId);
+                        askResult = doSqlAnswer(question, userId, sessionId, client, model, messageId);
                     } else {
-                        askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature, requestCancelService, messageId);
+                        askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature, requestCancelService, messageId, model);
                     }
                 } catch (Exception e) {
                     log.warn("[路由失败] question={} err={}，降级走 RAG", question, e.getMessage());
-                    askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature, requestCancelService, messageId);
+                    askResult = ragQueryService.ask(userId, sessionId, question, topK, temperature, requestCancelService, messageId, model);
                 }
             }
 
@@ -119,14 +119,18 @@ public class ChatController {
 
     /** 统一执行 Text-to-SQL，提取为私有方法供快筛和 LLM 路由共用 */
     private AskResult doSqlAnswer(String question, String userId, String sessionId,
-                                   ChatClient client, String messageId) {
+                                    ChatClient client, String model, String messageId) {
         long startMs = System.currentTimeMillis();
-        String answer = textToSqlService.anwserWithSql(question, userId, sessionId, client, requestCancelService, messageId);
+        // anwserWithSql 内部负责：插入 pending → 检查取消 → SQL生成/执行 → 写入结果
+        String answer = textToSqlService.anwserWithSql(question, userId, sessionId,
+                client, requestCancelService, messageId, model);
+        boolean cancelled = (answer == null || answer.isBlank());
         AskResult r = AskResult.builder()
-                .answer(answer)
-                .mode("sql")
+                .answer(answer != null ? answer : "")
+                .mode(cancelled ? "cancelled" : "sql")
                 .costMs(System.currentTimeMillis() - startMs)
                 .refCount(0)
+                .cancelled(cancelled)
                 .build();
         log.debug("[路由] question={} → SQL（启发式命中）", question);
         return r;

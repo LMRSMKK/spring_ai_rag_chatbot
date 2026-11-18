@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS kb_chunk (
     INDEX idx_kb_id (knowledge_base_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文本切块表';
 
--- 多轮对话消息表
+-- 多轮对话消息表（ask_id 用于关联同一轮问答的用户/助手消息；status 标记 pending/answered/cancelled）
 CREATE TABLE IF NOT EXISTS chat_message (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
     session_id  VARCHAR(64)   NOT NULL COMMENT '会话ID（UUID）',
@@ -45,9 +45,12 @@ CREATE TABLE IF NOT EXISTS chat_message (
     tokens_in   INT           COMMENT '输入token数',
     tokens_out  INT           COMMENT '输出token数',
     cost_ms     INT           COMMENT '耗时毫秒',
+    ask_id      VARCHAR(64)   COMMENT '本轮问答唯一ID，用于关联用户提问和AI回答两行记录',
+    status      VARCHAR(20)   NOT NULL DEFAULT 'pending' COMMENT 'pending=等待回答 answered=已完成 cancelled=已取消',
     create_time DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session (session_id),
-    INDEX idx_user_time (user_id, create_time)
+    INDEX idx_user_time (user_id, create_time),
+    INDEX idx_ask_id (ask_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='对话消息表';
 
 -- 操作日志表
@@ -81,3 +84,9 @@ CREATE TABLE IF NOT EXISTS sensitive_word (
 INSERT IGNORE INTO sensitive_word (word, level, replace_str) VALUES
 ('敏感词示例1', 'BLOCK', ''),
 ('敏感词示例2', 'BLOCK', '');
+
+-- ⚠️ 已有数据库执行以下 ALTER（仅首次迁移）
+ALTER TABLE chat_message 
+  ADD COLUMN ask_id VARCHAR(64) NULL COMMENT '本轮问答唯一ID' AFTER cost_ms,
+  ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT 'pending/answered/cancelled' AFTER ask_id,
+  ADD INDEX idx_ask_id (ask_id);
