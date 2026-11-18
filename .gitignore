@@ -36,3 +36,10 @@ build/
 src/main/resources/application.yml
 src/main/resources/application-docker.yml
 .env
+application.yml.template
+
+
+chroma/
+openjdk17.tar.gz
+jdk.tar.gz
+
